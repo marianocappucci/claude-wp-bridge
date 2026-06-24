@@ -1,8 +1,8 @@
 <?php
 /**
  * Plugin Name: Claude WP Bridge
- * Description: Exposes WordPress content and theme files as WordPress Abilities for use via MCP (Claude Code).
- * Version:     1.0.0
+ * Description: Exposes WordPress content, theme files and plugin management as WordPress Abilities for Claude Code via MCP. Replaces Compulibra Manager and Compulibra Auto Upload.
+ * Version:     1.1.0
  * Author:      Mariano Cappucci
  */
 
@@ -362,6 +362,122 @@ add_action( 'wp_abilities_api_init', function () {
             'mcp'          => [ 'public' => true ],
             'show_in_rest' => true,
             'annotations'  => [ 'readonly' => false, 'destructive' => true, 'idempotent' => true ],
+        ],
+    ] );
+
+    // ───────────────────────────────────────
+    // claude/list-plugins
+    // ───────────────────────────────────────
+    wp_register_ability( 'claude/list-plugins', [
+        'label'       => 'List Plugins',
+        'description' => 'List all installed WordPress plugins with their name, status, version and description.',
+        'category'    => 'site',
+        'input_schema' => [
+            'type'       => 'object',
+            'properties' => [
+                'status' => [
+                    'type'        => 'string',
+                    'enum'        => [ 'any', 'active', 'inactive' ],
+                    'default'     => 'any',
+                    'description' => 'Filter by plugin status',
+                ],
+            ],
+            'additionalProperties' => false,
+        ],
+        'output_schema' => [
+            'type'  => 'array',
+            'items' => [
+                'type'       => 'object',
+                'properties' => [
+                    'slug'        => [ 'type' => 'string' ],
+                    'name'        => [ 'type' => 'string' ],
+                    'version'     => [ 'type' => 'string' ],
+                    'description' => [ 'type' => 'string' ],
+                    'active'      => [ 'type' => 'boolean' ],
+                ],
+            ],
+        ],
+        'execute_callback' => function ( $input ) {
+            require_once ABSPATH . 'wp-admin/includes/plugin.php';
+            $all     = get_plugins();
+            $active  = get_option( 'active_plugins', [] );
+            $filter  = $input['status'] ?? 'any';
+            $result  = [];
+            foreach ( $all as $slug => $data ) {
+                $is_active = in_array( $slug, $active, true );
+                if ( $filter === 'active'   && ! $is_active ) continue;
+                if ( $filter === 'inactive' &&   $is_active ) continue;
+                $result[] = [
+                    'slug'        => $slug,
+                    'name'        => $data['Name'],
+                    'version'     => $data['Version'],
+                    'description' => wp_strip_all_tags( $data['Description'] ),
+                    'active'      => $is_active,
+                ];
+            }
+            return $result;
+        },
+        'permission_callback' => fn() => current_user_can( 'activate_plugins' ),
+        'meta' => [
+            'mcp'          => [ 'public' => true ],
+            'show_in_rest' => true,
+            'annotations'  => [ 'readonly' => true, 'destructive' => false, 'idempotent' => true ],
+        ],
+    ] );
+
+    // ───────────────────────────────────────
+    // claude/manage-plugin
+    // ───────────────────────────────────────
+    wp_register_ability( 'claude/manage-plugin', [
+        'label'       => 'Manage Plugin',
+        'description' => 'Activate or deactivate a WordPress plugin by its slug (e.g. "akismet/akismet.php").',
+        'category'    => 'site',
+        'input_schema' => [
+            'type'       => 'object',
+            'properties' => [
+                'plugin' => [
+                    'type'        => 'string',
+                    'description' => 'Plugin slug, e.g. "my-plugin/my-plugin.php"',
+                ],
+                'action' => [
+                    'type'        => 'string',
+                    'enum'        => [ 'activate', 'deactivate' ],
+                    'default'     => 'activate',
+                    'description' => 'Whether to activate or deactivate the plugin',
+                ],
+            ],
+            'required'             => [ 'plugin' ],
+            'additionalProperties' => false,
+        ],
+        'output_schema' => [
+            'type'       => 'object',
+            'properties' => [
+                'success' => [ 'type' => 'boolean' ],
+                'action'  => [ 'type' => 'string' ],
+                'plugin'  => [ 'type' => 'string' ],
+            ],
+        ],
+        'execute_callback' => function ( $input ) {
+            require_once ABSPATH . 'wp-admin/includes/plugin.php';
+            $plugin = sanitize_text_field( $input['plugin'] );
+            $action = $input['action'] ?? 'activate';
+
+            if ( $action === 'deactivate' ) {
+                deactivate_plugins( $plugin );
+                return [ 'success' => true, 'action' => 'deactivated', 'plugin' => $plugin ];
+            }
+
+            $result = activate_plugin( $plugin );
+            if ( is_wp_error( $result ) ) {
+                return new WP_Error( 'activation_failed', $result->get_error_message(), [ 'status' => 500 ] );
+            }
+            return [ 'success' => true, 'action' => 'activated', 'plugin' => $plugin ];
+        },
+        'permission_callback' => fn() => current_user_can( 'activate_plugins' ),
+        'meta' => [
+            'mcp'          => [ 'public' => true ],
+            'show_in_rest' => true,
+            'annotations'  => [ 'readonly' => false, 'destructive' => true, 'idempotent' => false ],
         ],
     ] );
 

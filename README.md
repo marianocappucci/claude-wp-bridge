@@ -1,6 +1,8 @@
 # Claude WP Bridge
 
-A WordPress plugin that exposes your site's content and theme files as **MCP tools** accessible from [Claude Code](https://claude.ai/code). Enables "vibecoding" WordPress directly from your terminal: read pages, update content, edit theme files — all from Claude, without FTP or wp-admin.
+A WordPress plugin that exposes your site as **MCP tools** accessible from [Claude Code](https://claude.ai/code). Manage pages, theme files, and plugins directly from your terminal — no FTP, no wp-admin, no custom REST endpoints needed.
+
+Designed to be the **single plugin** you need for Claude Code → WordPress integration. It replaces ad-hoc REST endpoint plugins by using the official WordPress Abilities API as the transport layer.
 
 ## How it works
 
@@ -17,7 +19,7 @@ Claude Code sees **3 fixed MCP tools** from the adapter:
 - `mcp-adapter-get-ability-info` — schema for a specific tool
 - `mcp-adapter-execute-ability` — runs any tool with parameters
 
-This plugin registers 8 **WordPress Abilities** under the `claude/` namespace, which the adapter exposes automatically.
+This plugin registers 10 **WordPress Abilities** under the `claude/` namespace, which the adapter exposes automatically.
 
 ---
 
@@ -40,11 +42,12 @@ Install and activate the [MCP Adapter](https://wordpress.org/plugins/mcp-adapter
 
 ### 2. Install Claude WP Bridge
 
-Upload `claude-wp-bridge.php` to `wp-content/plugins/claude-wp-bridge/claude-wp-bridge.php` and activate it from the WordPress admin, or use WP-CLI:
+**First install (bootstrap):** The plugin can't install itself, so the first time must be manual. Two options:
 
-```bash
-wp plugin install path/to/claude-wp-bridge.php --activate
-```
+- **wp-admin:** Go to *Plugins → Add New → Upload Plugin*, upload a ZIP of this repository, and activate.
+- **cPanel File Manager / FTP:** Upload `claude-wp-bridge.php` to `wp-content/plugins/claude-wp-bridge/claude-wp-bridge.php` and activate from *Plugins*.
+
+**Updates:** Once active, Claude can update the plugin itself using `claude/upload-file` to overwrite the PHP file. No deactivation needed — the new code loads on the next request.
 
 ### 3. Create an Application Password
 
@@ -106,6 +109,8 @@ All tools are under the `claude/` namespace and require admin-level authenticati
 | `claude/get-theme-file` | read | Content of a theme file by relative path |
 | `claude/update-theme-file` | write | Write to a theme file (creates missing directories) |
 | `claude/upload-file` | write | Write any file to `plugins/` or `themes/`, with base64 support |
+| `claude/list-plugins` | read | All installed plugins with name, version, status (active/inactive) |
+| `claude/manage-plugin` | write | Activate or deactivate a plugin by slug |
 
 ---
 
@@ -128,6 +133,15 @@ You: List the CSS files in my theme
 You: Update style.css to change the primary color to #e63946
 → [Claude reads the file, edits it, writes it back]
 → mcp-adapter-execute-ability("claude/update-theme-file", {"path": "style.css", "content": "..."})
+
+You: What plugins are installed and which ones are inactive?
+→ mcp-adapter-execute-ability("claude/list-plugins", {"status": "any"})
+
+You: Activate the contact-form-7 plugin
+→ mcp-adapter-execute-ability("claude/manage-plugin", {"plugin": "contact-form-7/wp-contact-form-7.php", "action": "activate"})
+
+You: Deploy my updated plugin file
+→ mcp-adapter-execute-ability("claude/upload-file", {"path": "plugins/my-plugin/my-plugin.php", "content": "..."})
 ```
 
 ---
