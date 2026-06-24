@@ -1,0 +1,155 @@
+# Claude WP Bridge
+
+A WordPress plugin that exposes your site's content and theme files as **MCP tools** accessible from [Claude Code](https://claude.ai/code). Enables "vibecoding" WordPress directly from your terminal: read pages, update content, edit theme files — all from Claude, without FTP or wp-admin.
+
+## How it works
+
+```
+Claude Code (MCP client)
+    ↕  @automattic/mcp-wordpress-remote  (STDIO → HTTP proxy)
+WordPress MCP Adapter  (official plugin, already on your site)
+    ↕  WordPress Abilities API  (WP 7.0+)
+Claude WP Bridge  (this plugin — registers the actual tools)
+```
+
+Claude Code sees **3 fixed MCP tools** from the adapter:
+- `mcp-adapter-discover-abilities` — lists all available tools
+- `mcp-adapter-get-ability-info` — schema for a specific tool
+- `mcp-adapter-execute-ability` — runs any tool with parameters
+
+This plugin registers 8 **WordPress Abilities** under the `claude/` namespace, which the adapter exposes automatically.
+
+---
+
+## Requirements
+
+| Requirement | Notes |
+|---|---|
+| **WordPress 7.0+** | Abilities API (`wp_register_ability`) is a WP 7.0 feature |
+| **[wordpress/mcp-adapter](https://wordpress.org/plugins/mcp-adapter/)** | The official plugin that bridges Abilities → MCP. Must be installed and active. |
+| **WordPress Application Password** | Go to *Users → Your Profile → Application Passwords* and generate one. Do **not** use your login password. |
+| **[Claude Code](https://claude.ai/code)** | The CLI where you'll interact with your site |
+
+---
+
+## Installation
+
+### 1. Install the official MCP Adapter
+
+Install and activate the [MCP Adapter](https://wordpress.org/plugins/mcp-adapter/) plugin on your WordPress site. This is the transport layer — Claude WP Bridge won't work without it.
+
+### 2. Install Claude WP Bridge
+
+Upload `claude-wp-bridge.php` to `wp-content/plugins/claude-wp-bridge/claude-wp-bridge.php` and activate it from the WordPress admin, or use WP-CLI:
+
+```bash
+wp plugin install path/to/claude-wp-bridge.php --activate
+```
+
+### 3. Create an Application Password
+
+1. Go to *Users → Your Profile* in wp-admin
+2. Scroll to **Application Passwords**
+3. Enter a name (e.g. `Claude Code`) and click **Add New Application Password**
+4. Copy the generated password — you won't see it again
+
+### 4. Configure Claude Code
+
+Create or edit `.claude/settings.json` in your project:
+
+```json
+{
+  "mcpServers": {
+    "wordpress": {
+      "command": "npx",
+      "args": ["@automattic/mcp-wordpress-remote"],
+      "env": {
+        "WORDPRESS_USERNAME": "your-wp-username",
+        "WORDPRESS_PASSWORD": "xxxx xxxx xxxx xxxx xxxx xxxx",
+        "WORDPRESS_URL": "https://your-site.com"
+      }
+    }
+  }
+}
+```
+
+> **Note:** Use the Application Password (spaces included), not your login password.
+
+Install the proxy if needed:
+```bash
+npm install -g @automattic/mcp-wordpress-remote
+```
+
+### 5. Verify
+
+Open Claude Code in your project directory and run:
+
+```
+What WordPress abilities are available?
+```
+
+Claude will call `mcp-adapter-discover-abilities` and list all registered tools.
+
+---
+
+## Available tools
+
+All tools are under the `claude/` namespace and require admin-level authentication.
+
+| Tool | Type | Description |
+|---|---|---|
+| `claude/site-map` | read | Site name, URL, WordPress version, active theme, and full page list |
+| `claude/list-pages` | read | All pages with ID, title, slug, status, and URL |
+| `claude/get-page` | read | Raw HTML content of a page by ID |
+| `claude/update-page` | write | Replace a page's HTML content (bypasses kses, preserves raw HTML) |
+| `claude/list-theme-files` | read | Files in the active theme, optionally filtered by extension |
+| `claude/get-theme-file` | read | Content of a theme file by relative path |
+| `claude/update-theme-file` | write | Write to a theme file (creates missing directories) |
+| `claude/upload-file` | write | Write any file to `plugins/` or `themes/`, with base64 support |
+
+---
+
+## Example Claude Code session
+
+```
+You: What pages does my site have?
+→ mcp-adapter-execute-ability("claude/list-pages", {"status": "publish"})
+
+You: Show me the HTML of the Home page (ID 34)
+→ mcp-adapter-execute-ability("claude/get-page", {"page_id": 34})
+
+You: Add a newsletter section before the footer in the Home page
+→ [Claude reads the page, modifies the HTML, calls update-page]
+→ mcp-adapter-execute-ability("claude/update-page", {"page_id": 34, "content": "..."})
+
+You: List the CSS files in my theme
+→ mcp-adapter-execute-ability("claude/list-theme-files", {"ext": "css"})
+
+You: Update style.css to change the primary color to #e63946
+→ [Claude reads the file, edits it, writes it back]
+→ mcp-adapter-execute-ability("claude/update-theme-file", {"path": "style.css", "content": "..."})
+```
+
+---
+
+## Security notes
+
+- All abilities require `manage_options` or `edit_pages` capability — only admins can use them
+- The `update-page` ability **bypasses WordPress kses filtering** by design, so raw HTML/CSS/JS is preserved. Only grant Application Passwords to trusted users.
+- The `upload-file` ability is restricted to `plugins/` and `themes/` subdirectories — it cannot write outside `wp-content/`
+- Path traversal (`../`) is stripped from all file path inputs
+
+---
+
+## Compatibility
+
+Tested with:
+- WordPress 7.0
+- MCP Adapter 0.5.0
+- PHP 8.3
+
+---
+
+## License
+
+MIT
