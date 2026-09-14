@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Claude WP Bridge
  * Description: Exposes WordPress content, theme files, plugin management and Elementor page data as WordPress Abilities for Claude Code via MCP. Replaces Compulibra Manager and Compulibra Auto Upload.
- * Version:     1.4.0
+ * Version:     1.4.1
  * Author:      Mariano Cappucci
  */
 
@@ -20,26 +20,26 @@ if ( ! defined( 'ABSPATH' ) ) exit;
 function claude_wp_bridge_groups() {
     return [
         'read'    => [
-            'label'       => 'Read the site',
-            'description' => 'Site map, pages, theme files, installed plugins and Elementor structure. Changes nothing.',
+            'label'       => __( 'Read the site', 'claude-wp-bridge' ),
+            'description' => __( 'Site map, pages, theme files, installed plugins and Elementor structure. Changes nothing.', 'claude-wp-bridge' ),
             'default'     => true,
             'abilities'   => [ 'claude/site-map', 'claude/list-pages', 'claude/get-page', 'claude/list-theme-files', 'claude/get-theme-file', 'claude/list-plugins', 'claude/elementor-list', 'claude/elementor-get' ],
         ],
         'content' => [
-            'label'       => 'Edit pages and Elementor',
-            'description' => 'Page content, Elementor pages and templates, display conditions and cache flushes. Every Elementor write is backed up first.',
+            'label'       => __( 'Edit pages and Elementor', 'claude-wp-bridge' ),
+            'description' => __( 'Page content, Elementor pages and templates, display conditions and cache flushes. Every Elementor write is backed up first.', 'claude-wp-bridge' ),
             'default'     => true,
             'abilities'   => [ 'claude/update-page', 'claude/elementor-update-element', 'claude/elementor-save', 'claude/elementor-restore', 'claude/elementor-flush', 'claude/elementor-create', 'claude/elementor-set-conditions' ],
         ],
         'plugins' => [
-            'label'       => 'Activate and deactivate plugins',
-            'description' => 'Switch installed plugins on and off.',
+            'label'       => __( 'Activate and deactivate plugins', 'claude-wp-bridge' ),
+            'description' => __( 'Switch installed plugins on and off.', 'claude-wp-bridge' ),
             'default'     => false,
             'abilities'   => [ 'claude/manage-plugin' ],
         ],
         'code'    => [
-            'label'       => 'Write code files',
-            'description' => 'Theme files and uploads to plugins/ and themes/. Whoever holds an Application Password can then run PHP on this site: switch it on only while it is needed, e.g. to update this plugin.',
+            'label'       => __( 'Write code files', 'claude-wp-bridge' ),
+            'description' => __( 'Theme files and uploads to plugins/ and themes/. Whoever holds an Application Password can then run PHP on this site: switch it on only while it is needed, e.g. to update this plugin.', 'claude-wp-bridge' ),
             'default'     => false,
             'abilities'   => [ 'claude/update-theme-file', 'claude/upload-file' ],
         ],
@@ -1331,9 +1331,87 @@ add_action( 'admin_menu', function () {
 } );
 
 add_filter( 'plugin_action_links_' . plugin_basename( __FILE__ ), function ( $links ) {
-    array_unshift( $links, '<a href="' . esc_url( admin_url( 'options-general.php?page=claude-wp-bridge' ) ) . '">Settings</a>' );
+    array_unshift( $links, '<a href="' . esc_url( admin_url( 'options-general.php?page=claude-wp-bridge' ) ) . '">' . esc_html__( 'Settings', 'claude-wp-bridge' ) . '</a>' );
     return $links;
 } );
+
+// ───────────────────────────────────────
+// Translations
+// ───────────────────────────────────────
+//
+// The screen's strings use the text domain "claude-wp-bridge". The plugin ships
+// its Spanish translation inline, so it stays a single file: it applies to any
+// Spanish locale (es_AR, es_ES, es_MX…) unless a real translation — e.g. one made
+// with Loco Translate — already translated the string.
+
+add_filter( 'gettext_claude-wp-bridge', 'claude_wp_bridge_gettext', 10, 2 );
+
+function claude_wp_bridge_gettext( $translation, $text ) {
+    if ( $translation !== $text || strpos( determine_locale(), 'es' ) !== 0 ) {
+        return $translation;
+    }
+    $spanish = claude_wp_bridge_spanish();
+    return $spanish[ $text ] ?? $translation;
+}
+
+function claude_wp_bridge_spanish() {
+    return [
+        // Tool groups.
+        'Read the site'                    => 'Leer el sitio',
+        'Site map, pages, theme files, installed plugins and Elementor structure. Changes nothing.' => 'Mapa del sitio, páginas, archivos del tema, plugins instalados y estructura de Elementor. No cambia nada.',
+        'Edit pages and Elementor'         => 'Editar páginas y Elementor',
+        'Page content, Elementor pages and templates, display conditions and cache flushes. Every Elementor write is backed up first.' => 'Contenido de las páginas, páginas y plantillas de Elementor, condiciones de visualización y purga de caché. Antes de cada cambio en Elementor se guarda un respaldo.',
+        'Activate and deactivate plugins'  => 'Activar y desactivar plugins',
+        'Switch installed plugins on and off.' => 'Activa y desactiva los plugins instalados.',
+        'Write code files'                 => 'Escribir archivos de código',
+        'Theme files and uploads to plugins/ and themes/. Whoever holds an Application Password can then run PHP on this site: switch it on only while it is needed, e.g. to update this plugin.' => 'Archivos del tema y subidas a plugins/ y themes/. Con esto encendido, quien tenga una contraseña de aplicación puede ejecutar PHP en el sitio: enciéndelo solo mientras haga falta, por ejemplo para actualizar este plugin.',
+        // Plugin list link.
+        'Settings'                         => 'Ajustes',
+        // Notices.
+        'Tool groups saved. They apply from the next request.' => 'Grupos guardados. Se aplican desde la próxima solicitud.',
+        'Application Passwords are not available for this user or this site (WordPress requires HTTPS for them).' => 'Las contraseñas de aplicación no están disponibles para este usuario o este sitio (WordPress exige HTTPS).',
+        'Access created.'                  => 'Acceso creado.',
+        'You cannot manage the Application Passwords of that user.' => 'No puedes administrar las contraseñas de aplicación de ese usuario.',
+        'Access revoked. Whoever used that password can no longer connect.' => 'Acceso revocado. Quien usaba esa contraseña ya no puede conectarse.',
+        // New access.
+        'Copy this now: it will not be shown again.' => 'Cópiala ahora: no se volverá a mostrar.',
+        'Save it as the %s file Claude Code reads on your computer. Do not paste it into the chat.' => 'Guárdala como el archivo %s que lee Claude Code en tu equipo. No la pegues en el chat.',
+        'Copy'                             => 'Copiar',
+        'Copied'                           => 'Copiado',
+        // Access section.
+        'Access for Claude'                => 'Acceso para Claude',
+        'Claude Code connects with an Application Password. Create one here and paste it into the %s file on the computer where Claude runs; WordPress stores only its hash, and this plugin stores nothing.' => 'Claude Code se conecta con una contraseña de aplicación. Créala aquí y pégala en el archivo %s del equipo donde se ejecuta Claude: WordPress guarda solo su huella (hash) y este plugin no guarda nada.',
+        'Create access for Claude'         => 'Crear acceso para Claude',
+        'For your user, %s.'               => 'Para tu usuario, %s.',
+        'Application Passwords on this site' => 'Contraseñas de aplicación de este sitio',
+        'None.'                            => 'Ninguna.',
+        'User'                             => 'Usuario',
+        'Name'                             => 'Nombre',
+        'Created'                          => 'Creada',
+        'Last used'                        => 'Último uso',
+        'Last IP'                          => 'Última IP',
+        '(created here)'                   => '(creada aquí)',
+        'Never'                            => 'Nunca',
+        'Revoke this Application Password? Whoever uses it will lose access.' => '¿Revocar esta contraseña de aplicación? Quien la use perderá el acceso.',
+        'Revoke'                           => 'Revocar',
+        // Tool groups section.
+        'Tool groups'                      => 'Grupos de herramientas',
+        'A group that is off is not registered: its tools cannot be listed or run, whatever password is used.' => 'Un grupo apagado no se registra: sus herramientas no se pueden listar ni ejecutar, con ninguna contraseña.',
+        'On'                               => 'Encendido',
+        'Save tool groups'                 => 'Guardar grupos',
+        // Status section.
+        'Status'                           => 'Estado',
+        'Abilities API'                    => 'API de habilidades (Abilities)',
+        'Available'                        => 'Disponible',
+        'Missing (needs WordPress 7.0+)'   => 'No disponible (requiere WordPress 7.0 o superior)',
+        'Active'                           => 'Activo',
+        'Not active (only needed for the MCP route; the REST route works without it)' => 'No activo (solo hace falta para la conexión por MCP; la conexión por REST funciona sin él)',
+        'Not active'                       => 'No activo',
+        'Claude tools active'              => 'Herramientas de Claude activas',
+        '%1$d of %2$d'                     => '%1$d de %2$d',
+        'REST endpoint'                    => 'Endpoint REST',
+    ];
+}
 
 // Handles the three forms of the screen. Returns [ notice, new .env text or null ].
 function claude_wp_bridge_settings_actions() {
@@ -1350,13 +1428,13 @@ function claude_wp_bridge_settings_actions() {
             $saved[ $key ] = in_array( $key, $posted, true );
         }
         update_option( 'claude_wp_bridge_groups', $saved, false );
-        return [ [ 'success', 'Tool groups saved. They apply from the next request.' ], null ];
+        return [ [ 'success', __( 'Tool groups saved. They apply from the next request.', 'claude-wp-bridge' ) ], null ];
     }
 
     if ( $action === 'create' ) {
         $user = wp_get_current_user();
         if ( ! wp_is_application_passwords_available_for_user( $user ) ) {
-            return [ [ 'error', 'Application Passwords are not available for this user or this site (WordPress requires HTTPS for them).' ], null ];
+            return [ [ 'error', __( 'Application Passwords are not available for this user or this site (WordPress requires HTTPS for them).', 'claude-wp-bridge' ) ], null ];
         }
         $created = WP_Application_Passwords::create_new_application_password( $user->ID, [
             'name' => CLAUDE_WP_BRIDGE_APP_PREFIX . ' – ' . wp_date( 'Y-m-d H:i' ),
@@ -1367,19 +1445,19 @@ function claude_wp_bridge_settings_actions() {
         $env = 'WP_URL=' . untrailingslashit( home_url() ) . "\n"
             . 'WP_USER=' . $user->user_login . "\n"
             . 'WP_APP_PASSWORD="' . WP_Application_Passwords::chunk_password( $created[0] ) . "\"\n";
-        return [ [ 'success', 'Access created.' ], $env ];
+        return [ [ 'success', __( 'Access created.', 'claude-wp-bridge' ) ], $env ];
     }
 
     $user_id = (int) ( $_POST['user_id'] ?? 0 );
     $uuid    = sanitize_text_field( wp_unslash( $_POST['uuid'] ?? '' ) );
     if ( ! current_user_can( 'edit_user', $user_id ) ) {
-        return [ [ 'error', 'You cannot manage the Application Passwords of that user.' ], null ];
+        return [ [ 'error', __( 'You cannot manage the Application Passwords of that user.', 'claude-wp-bridge' ) ], null ];
     }
     $deleted = WP_Application_Passwords::delete_application_password( $user_id, $uuid );
     if ( is_wp_error( $deleted ) ) {
         return [ [ 'error', $deleted->get_error_message() ], null ];
     }
-    return [ [ 'success', 'Access revoked. Whoever used that password can no longer connect.' ], null ];
+    return [ [ 'success', __( 'Access revoked. Whoever used that password can no longer connect.', 'claude-wp-bridge' ) ], null ];
 }
 
 function claude_wp_bridge_settings_page() {
@@ -1392,6 +1470,7 @@ function claude_wp_bridge_settings_page() {
     $groups  = claude_wp_bridge_groups();
     $enabled = claude_wp_bridge_enabled_groups();
     $page    = admin_url( 'options-general.php?page=claude-wp-bridge' );
+    $env_tag = '<code>.env</code>';
 
     $active = [];
     if ( function_exists( 'wp_get_abilities' ) ) {
@@ -1402,6 +1481,7 @@ function claude_wp_bridge_settings_page() {
             }
         }
     }
+    $all_tools = count( array_merge( ...array_values( wp_list_pluck( $groups, 'abilities' ) ) ) );
 
     $rows = [];
     $meta = class_exists( 'WP_Application_Passwords' ) ? WP_Application_Passwords::USERMETA_KEY_APPLICATION_PASSWORDS : '';
@@ -1414,7 +1494,7 @@ function claude_wp_bridge_settings_page() {
         return (int) $b['item']['created'] <=> (int) $a['item']['created'];
     } );
     $when = function ( $timestamp ) {
-        return $timestamp ? wp_date( 'Y-m-d H:i', (int) $timestamp ) : 'Never';
+        return $timestamp ? wp_date( 'Y-m-d H:i', (int) $timestamp ) : __( 'Never', 'claude-wp-bridge' );
     };
     ?>
     <div class="wrap">
@@ -1426,29 +1506,39 @@ function claude_wp_bridge_settings_page() {
 
         <?php if ( $new_env ) : ?>
             <div class="notice notice-warning" style="padding:12px 16px;">
-                <p><strong>Copy this now: it will not be shown again.</strong> Save it as the <code>.env</code> file Claude Code reads on your computer. Do not paste it into the chat.</p>
+                <p>
+                    <strong><?php esc_html_e( 'Copy this now: it will not be shown again.', 'claude-wp-bridge' ); ?></strong>
+                    <?php printf( esc_html__( 'Save it as the %s file Claude Code reads on your computer. Do not paste it into the chat.', 'claude-wp-bridge' ), $env_tag ); ?>
+                </p>
                 <textarea id="claude-wp-bridge-env" readonly rows="4" style="width:100%;max-width:640px;font-family:monospace;"><?php echo esc_textarea( $new_env ); ?></textarea>
                 <p>
-                    <button type="button" class="button button-primary" onclick="var t=document.getElementById('claude-wp-bridge-env');var b=this;t.select();(navigator.clipboard?navigator.clipboard.writeText(t.value):Promise.reject()).then(function(){b.textContent='Copied';},function(){document.execCommand('copy');b.textContent='Copied';});">Copy</button>
+                    <button type="button" class="button button-primary" data-copied="<?php echo esc_attr__( 'Copied', 'claude-wp-bridge' ); ?>" onclick="var t=document.getElementById('claude-wp-bridge-env');var b=this;t.select();(navigator.clipboard?navigator.clipboard.writeText(t.value):Promise.reject()).then(function(){b.textContent=b.dataset.copied;},function(){document.execCommand('copy');b.textContent=b.dataset.copied;});"><?php esc_html_e( 'Copy', 'claude-wp-bridge' ); ?></button>
                 </p>
             </div>
         <?php endif; ?>
 
-        <h2>Access for Claude</h2>
-        <p>Claude Code connects with an Application Password. Create one here and paste it into the <code>.env</code> file on the computer where Claude runs; WordPress stores only its hash, and this plugin stores nothing.</p>
+        <h2><?php esc_html_e( 'Access for Claude', 'claude-wp-bridge' ); ?></h2>
+        <p><?php printf( esc_html__( 'Claude Code connects with an Application Password. Create one here and paste it into the %s file on the computer where Claude runs; WordPress stores only its hash, and this plugin stores nothing.', 'claude-wp-bridge' ), $env_tag ); ?></p>
         <form method="post" action="<?php echo esc_url( $page ); ?>">
             <?php wp_nonce_field( 'claude_wp_bridge_create' ); ?>
             <input type="hidden" name="claude_wp_bridge_action" value="create">
-            <?php submit_button( 'Create access for Claude', 'primary', 'submit', false ); ?>
-            <span class="description">For your user, <?php echo esc_html( wp_get_current_user()->user_login ); ?>.</span>
+            <?php submit_button( __( 'Create access for Claude', 'claude-wp-bridge' ), 'primary', 'submit', false ); ?>
+            <span class="description"><?php echo esc_html( sprintf( __( 'For your user, %s.', 'claude-wp-bridge' ), wp_get_current_user()->user_login ) ); ?></span>
         </form>
 
-        <h3>Application Passwords on this site</h3>
+        <h3><?php esc_html_e( 'Application Passwords on this site', 'claude-wp-bridge' ); ?></h3>
         <?php if ( ! $rows ) : ?>
-            <p>None.</p>
+            <p><?php esc_html_e( 'None.', 'claude-wp-bridge' ); ?></p>
         <?php else : ?>
             <table class="widefat striped" style="max-width:980px;">
-                <thead><tr><th>User</th><th>Name</th><th>Created</th><th>Last used</th><th>Last IP</th><th></th></tr></thead>
+                <thead><tr>
+                    <th><?php esc_html_e( 'User', 'claude-wp-bridge' ); ?></th>
+                    <th><?php esc_html_e( 'Name', 'claude-wp-bridge' ); ?></th>
+                    <th><?php esc_html_e( 'Created', 'claude-wp-bridge' ); ?></th>
+                    <th><?php esc_html_e( 'Last used', 'claude-wp-bridge' ); ?></th>
+                    <th><?php esc_html_e( 'Last IP', 'claude-wp-bridge' ); ?></th>
+                    <th></th>
+                </tr></thead>
                 <tbody>
                 <?php foreach ( $rows as $row ) : $item = $row['item']; ?>
                     <tr>
@@ -1456,19 +1546,19 @@ function claude_wp_bridge_settings_page() {
                         <td>
                             <?php echo esc_html( $item['name'] ); ?>
                             <?php if ( strpos( $item['name'], CLAUDE_WP_BRIDGE_APP_PREFIX ) === 0 ) : ?>
-                                <span class="description">(created here)</span>
+                                <span class="description"><?php esc_html_e( '(created here)', 'claude-wp-bridge' ); ?></span>
                             <?php endif; ?>
                         </td>
                         <td><?php echo esc_html( $when( $item['created'] ) ); ?></td>
                         <td><?php echo esc_html( $when( $item['last_used'] ?? null ) ); ?></td>
                         <td><?php echo esc_html( $item['last_ip'] ?? '' ); ?></td>
                         <td>
-                            <form method="post" action="<?php echo esc_url( $page ); ?>" onsubmit="return confirm('Revoke this Application Password? Whoever uses it will lose access.');">
+                            <form method="post" action="<?php echo esc_url( $page ); ?>" data-confirm="<?php echo esc_attr__( 'Revoke this Application Password? Whoever uses it will lose access.', 'claude-wp-bridge' ); ?>" onsubmit="return confirm(this.dataset.confirm);">
                                 <?php wp_nonce_field( 'claude_wp_bridge_revoke' ); ?>
                                 <input type="hidden" name="claude_wp_bridge_action" value="revoke">
                                 <input type="hidden" name="user_id" value="<?php echo esc_attr( $row['user']->ID ); ?>">
                                 <input type="hidden" name="uuid" value="<?php echo esc_attr( $item['uuid'] ); ?>">
-                                <?php submit_button( 'Revoke', 'delete small', 'submit', false ); ?>
+                                <?php submit_button( __( 'Revoke', 'claude-wp-bridge' ), 'delete small', 'submit', false ); ?>
                             </form>
                         </td>
                     </tr>
@@ -1477,8 +1567,8 @@ function claude_wp_bridge_settings_page() {
             </table>
         <?php endif; ?>
 
-        <h2>Tool groups</h2>
-        <p>A group that is off is not registered: its tools cannot be listed or run, whatever password is used.</p>
+        <h2><?php esc_html_e( 'Tool groups', 'claude-wp-bridge' ); ?></h2>
+        <p><?php esc_html_e( 'A group that is off is not registered: its tools cannot be listed or run, whatever password is used.', 'claude-wp-bridge' ); ?></p>
         <form method="post" action="<?php echo esc_url( $page ); ?>">
             <?php wp_nonce_field( 'claude_wp_bridge_groups' ); ?>
             <input type="hidden" name="claude_wp_bridge_action" value="groups">
@@ -1489,7 +1579,7 @@ function claude_wp_bridge_settings_page() {
                         <td>
                             <label>
                                 <input type="checkbox" name="groups[]" value="<?php echo esc_attr( $key ); ?>" <?php checked( ! empty( $enabled[ $key ] ) ); ?>>
-                                On
+                                <?php esc_html_e( 'On', 'claude-wp-bridge' ); ?>
                             </label>
                             <p class="description"><?php echo esc_html( $group['description'] ); ?></p>
                             <p class="description"><?php echo implode( ' ', array_map( function ( $ability ) {
@@ -1499,18 +1589,18 @@ function claude_wp_bridge_settings_page() {
                     </tr>
                 <?php endforeach; ?>
             </table>
-            <?php submit_button( 'Save tool groups' ); ?>
+            <?php submit_button( __( 'Save tool groups', 'claude-wp-bridge' ) ); ?>
         </form>
 
-        <h2>Status</h2>
+        <h2><?php esc_html_e( 'Status', 'claude-wp-bridge' ); ?></h2>
         <table class="widefat striped" style="max-width:980px;">
             <tbody>
                 <tr><td>WordPress</td><td><?php echo esc_html( get_bloginfo( 'version' ) ); ?></td></tr>
-                <tr><td>Abilities API</td><td><?php echo function_exists( 'wp_register_ability' ) ? 'Available' : 'Missing (needs WordPress 7.0+)'; ?></td></tr>
-                <tr><td>MCP Adapter</td><td><?php echo function_exists( 'is_plugin_active' ) && is_plugin_active( 'mcp-adapter/mcp-adapter.php' ) ? 'Active' : 'Not active (only needed for the MCP route; the REST route works without it)'; ?></td></tr>
-                <tr><td>Elementor</td><td><?php echo claude_wp_bridge_elementor_active() ? 'Active' : 'Not active'; ?></td></tr>
-                <tr><td>Claude tools active</td><td><?php echo esc_html( count( $active ) . ' of ' . count( array_merge( ...array_values( wp_list_pluck( $groups, 'abilities' ) ) ) ) ); ?></td></tr>
-                <tr><td>REST endpoint</td><td><code><?php echo esc_html( rest_url( 'wp-abilities/v1/abilities' ) ); ?></code></td></tr>
+                <tr><td><?php esc_html_e( 'Abilities API', 'claude-wp-bridge' ); ?></td><td><?php echo function_exists( 'wp_register_ability' ) ? esc_html__( 'Available', 'claude-wp-bridge' ) : esc_html__( 'Missing (needs WordPress 7.0+)', 'claude-wp-bridge' ); ?></td></tr>
+                <tr><td>MCP Adapter</td><td><?php echo function_exists( 'is_plugin_active' ) && is_plugin_active( 'mcp-adapter/mcp-adapter.php' ) ? esc_html__( 'Active', 'claude-wp-bridge' ) : esc_html__( 'Not active (only needed for the MCP route; the REST route works without it)', 'claude-wp-bridge' ); ?></td></tr>
+                <tr><td>Elementor</td><td><?php echo claude_wp_bridge_elementor_active() ? esc_html__( 'Active', 'claude-wp-bridge' ) : esc_html__( 'Not active', 'claude-wp-bridge' ); ?></td></tr>
+                <tr><td><?php esc_html_e( 'Claude tools active', 'claude-wp-bridge' ); ?></td><td><?php echo esc_html( sprintf( __( '%1$d of %2$d', 'claude-wp-bridge' ), count( $active ), $all_tools ) ); ?></td></tr>
+                <tr><td><?php esc_html_e( 'REST endpoint', 'claude-wp-bridge' ); ?></td><td><code><?php echo esc_html( rest_url( 'wp-abilities/v1/abilities' ) ); ?></code></td></tr>
             </tbody>
         </table>
     </div>
