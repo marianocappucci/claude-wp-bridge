@@ -134,15 +134,17 @@ Elementor drops widgets whose type is not registered — for example, widgets fr
 
 ### Calling the tools without MCP
 
-Every ability is also a plain REST endpoint, authenticated with the same Application Password. WordPress picks the HTTP method from the ability's annotations: **GET** for read-only abilities, **DELETE** for destructive ones (every `update-*`, `upload-file`, `manage-plugin`, `elementor-update-element`, `elementor-save` and `elementor-restore`), and **POST** for the rest (`elementor-flush`). Any other method is rejected with `rest_ability_invalid_method`.
+Every ability is also a plain REST endpoint, authenticated with the same Application Password. WordPress picks the HTTP method from the ability's annotations and rejects any other with `rest_ability_invalid_method`: **GET** for read-only abilities and **POST** for the ones that write.
+
+> **Why no ability here is annotated `destructive`:** WordPress 7.1 calls destructive abilities with **DELETE** and reads their input from the query string, which web servers cut off at a few KB — far too little for a page, a theme file or a plugin upload. So every ability that writes is annotated `destructive: false` and goes through POST with a JSON body. Up to v1.1.0 the writing abilities were destructive, so their large-input calls cannot work on WordPress 7.1: **upgrading from v1.1.0 has to be done by hand** (wp-admin → *Plugins → Add New → Upload Plugin*, replacing the current version). From v1.2.0 on, `claude/upload-file` can update the plugin again.
 
 ```bash
 # Read-only abilities: GET, input as query parameters
 curl -u "user:app-password" -G "https://your-site.com/wp-json/wp-abilities/v1/abilities/claude/elementor-get/run" \
   --data-urlencode "input[post_id]=34"
 
-# Destructive abilities: DELETE, input as JSON
-curl -u "user:app-password" -X DELETE -H "Content-Type: application/json" \
+# Abilities that write: POST, input as JSON
+curl -u "user:app-password" -X POST -H "Content-Type: application/json" \
   "https://your-site.com/wp-json/wp-abilities/v1/abilities/claude/elementor-update-element/run" \
   -d '{"input": {"post_id": 34, "element_id": "a1b2c3d", "settings": {"title": "New heading"}}}'
 ```
