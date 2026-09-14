@@ -19,7 +19,7 @@ Claude Code sees **3 fixed MCP tools** from the adapter:
 - `mcp-adapter-get-ability-info` — schema for a specific tool
 - `mcp-adapter-execute-ability` — runs any tool with parameters
 
-This plugin registers 16 **WordPress Abilities** under the `claude/` namespace, which the adapter exposes automatically.
+This plugin registers 18 **WordPress Abilities** under the `claude/` namespace, which the adapter exposes automatically.
 
 ---
 
@@ -119,6 +119,8 @@ All tools are under the `claude/` namespace and require admin-level authenticati
 | `claude/elementor-save` | write | Replace the whole elements JSON of a post (add, remove or reorder sections) |
 | `claude/elementor-restore` | write | Restore a backup taken before an earlier Elementor write |
 | `claude/elementor-flush` | write | Regenerate Elementor CSS and purge LiteSpeed Cache |
+| `claude/elementor-create` | write | Create an empty Elementor page, post or template (loop item, archive, header…) |
+| `claude/elementor-set-conditions` | write | Set where a theme-builder template is displayed (e.g. `include/archive/category/125`) |
 
 ### Elementor pages
 
@@ -127,6 +129,8 @@ Elementor renders a page from the JSON stored in the `_elementor_data` meta. `po
 1. `claude/elementor-list` to find the post (headers and footers are `elementor_library` templates, not pages).
 2. `claude/elementor-get` with the post ID to see the outline, then with `element_id` to see one element's settings.
 3. `claude/elementor-update-element` to change it, or `claude/elementor-save` for structural changes.
+
+To build something new, `claude/elementor-create` makes an empty page or template — for a loop item over categories, pass `source: "post_taxonomy"` — and `claude/elementor-save` fills it; `settings` there sets the document settings. A theme-builder template (an archive, a single, a header) only shows once it has display conditions: set them with `claude/elementor-set-conditions`, and clear them with an empty list to take it off the site. `claude/elementor-get` returns the current `source`, `page_settings` and `conditions`.
 
 Every write goes through Elementor's own `Document::save()`, which validates the widgets and regenerates the `post_content` copy. Before writing, the current JSON is stored as a backup (the last 10 per post are kept, in the `_claude_elementor_backup` meta), and afterwards the Elementor CSS and LiteSpeed Cache are flushed. Editing a template flushes the whole site, since it appears on every page.
 
