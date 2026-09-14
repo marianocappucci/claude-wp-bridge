@@ -2,11 +2,78 @@
 /**
  * Plugin Name: Claude WP Bridge
  * Description: Exposes WordPress content, theme files, plugin management and Elementor page data as WordPress Abilities for Claude Code via MCP. Replaces Compulibra Manager and Compulibra Auto Upload.
- * Version:     1.3.1
+ * Version:     1.4.0
  * Author:      Mariano Cappucci
  */
 
 if ( ! defined( 'ABSPATH' ) ) exit;
+
+// ───────────────────────────────────────
+// Tool groups
+// ───────────────────────────────────────
+//
+// Every ability belongs to one group, by risk. An administrator switches the
+// groups on and off in Settings → Claude WP Bridge; an ability whose group is
+// off is not registered at all, so it cannot be listed or run. The groups that
+// can run PHP on the site start switched off.
+
+function claude_wp_bridge_groups() {
+    return [
+        'read'    => [
+            'label'       => 'Read the site',
+            'description' => 'Site map, pages, theme files, installed plugins and Elementor structure. Changes nothing.',
+            'default'     => true,
+            'abilities'   => [ 'claude/site-map', 'claude/list-pages', 'claude/get-page', 'claude/list-theme-files', 'claude/get-theme-file', 'claude/list-plugins', 'claude/elementor-list', 'claude/elementor-get' ],
+        ],
+        'content' => [
+            'label'       => 'Edit pages and Elementor',
+            'description' => 'Page content, Elementor pages and templates, display conditions and cache flushes. Every Elementor write is backed up first.',
+            'default'     => true,
+            'abilities'   => [ 'claude/update-page', 'claude/elementor-update-element', 'claude/elementor-save', 'claude/elementor-restore', 'claude/elementor-flush', 'claude/elementor-create', 'claude/elementor-set-conditions' ],
+        ],
+        'plugins' => [
+            'label'       => 'Activate and deactivate plugins',
+            'description' => 'Switch installed plugins on and off.',
+            'default'     => false,
+            'abilities'   => [ 'claude/manage-plugin' ],
+        ],
+        'code'    => [
+            'label'       => 'Write code files',
+            'description' => 'Theme files and uploads to plugins/ and themes/. Whoever holds an Application Password can then run PHP on this site: switch it on only while it is needed, e.g. to update this plugin.',
+            'default'     => false,
+            'abilities'   => [ 'claude/update-theme-file', 'claude/upload-file' ],
+        ],
+    ];
+}
+
+function claude_wp_bridge_enabled_groups() {
+    $saved   = get_option( 'claude_wp_bridge_groups', null );
+    $enabled = [];
+    foreach ( claude_wp_bridge_groups() as $key => $group ) {
+        $enabled[ $key ] = ( is_array( $saved ) && array_key_exists( $key, $saved ) ) ? (bool) $saved[ $key ] : $group['default'];
+    }
+    return $enabled;
+}
+
+function claude_wp_bridge_ability_group( $name ) {
+    foreach ( claude_wp_bridge_groups() as $key => $group ) {
+        if ( in_array( $name, $group['abilities'], true ) ) {
+            return $key;
+        }
+    }
+    return null;
+}
+
+// Registers an ability only when its group is on. An ability missing from the
+// groups is never registered, so a new one cannot slip past the switches.
+function claude_wp_bridge_register( $name, array $args ) {
+    $group   = claude_wp_bridge_ability_group( $name );
+    $enabled = claude_wp_bridge_enabled_groups();
+    if ( $group === null || empty( $enabled[ $group ] ) ) {
+        return;
+    }
+    wp_register_ability( $name, $args );
+}
 
 // ───────────────────────────────────────
 // Elementor helpers
@@ -275,7 +342,7 @@ add_action( 'wp_abilities_api_init', function () {
     // ───────────────────────────────────────
     // claude/list-pages
     // ───────────────────────────────────────
-    wp_register_ability( 'claude/list-pages', [
+    claude_wp_bridge_register( 'claude/list-pages', [
         'label'       => 'List Pages',
         'description' => 'List all WordPress pages with ID, title, slug and status.',
         'category'    => 'site',
@@ -333,7 +400,7 @@ add_action( 'wp_abilities_api_init', function () {
     // ───────────────────────────────────────
     // claude/get-page
     // ───────────────────────────────────────
-    wp_register_ability( 'claude/get-page', [
+    claude_wp_bridge_register( 'claude/get-page', [
         'label'       => 'Get Page Content',
         'description' => 'Get the raw HTML content of a WordPress page by ID.',
         'category'    => 'site',
@@ -379,7 +446,7 @@ add_action( 'wp_abilities_api_init', function () {
     // ───────────────────────────────────────
     // claude/update-page
     // ───────────────────────────────────────
-    wp_register_ability( 'claude/update-page', [
+    claude_wp_bridge_register( 'claude/update-page', [
         'label'       => 'Update Page Content',
         'description' => 'Replace the HTML content of a WordPress page. Bypasses kses filtering to preserve raw HTML, CSS, and inline scripts.',
         'category'    => 'site',
@@ -433,7 +500,7 @@ add_action( 'wp_abilities_api_init', function () {
     // ───────────────────────────────────────
     // claude/list-theme-files
     // ───────────────────────────────────────
-    wp_register_ability( 'claude/list-theme-files', [
+    claude_wp_bridge_register( 'claude/list-theme-files', [
         'label'       => 'List Theme Files',
         'description' => 'List files in the active theme directory, optionally filtered by extension.',
         'category'    => 'site',
@@ -481,7 +548,7 @@ add_action( 'wp_abilities_api_init', function () {
     // ───────────────────────────────────────
     // claude/get-theme-file
     // ───────────────────────────────────────
-    wp_register_ability( 'claude/get-theme-file', [
+    claude_wp_bridge_register( 'claude/get-theme-file', [
         'label'       => 'Get Theme File',
         'description' => 'Read a file from the active WordPress theme directory.',
         'category'    => 'site',
@@ -524,7 +591,7 @@ add_action( 'wp_abilities_api_init', function () {
     // ───────────────────────────────────────
     // claude/update-theme-file
     // ───────────────────────────────────────
-    wp_register_ability( 'claude/update-theme-file', [
+    claude_wp_bridge_register( 'claude/update-theme-file', [
         'label'       => 'Update Theme File',
         'description' => 'Write content to a file in the active WordPress theme directory. Creates the file if it does not exist.',
         'category'    => 'site',
@@ -571,7 +638,7 @@ add_action( 'wp_abilities_api_init', function () {
     // ───────────────────────────────────────
     // claude/upload-file
     // ───────────────────────────────────────
-    wp_register_ability( 'claude/upload-file', [
+    claude_wp_bridge_register( 'claude/upload-file', [
         'label'       => 'Upload File',
         'description' => 'Write a file to wp-content/plugins/ or wp-content/themes/. Content can be plain text or base64-encoded (set base64: true).',
         'category'    => 'site',
@@ -630,7 +697,7 @@ add_action( 'wp_abilities_api_init', function () {
     // ───────────────────────────────────────
     // claude/list-plugins
     // ───────────────────────────────────────
-    wp_register_ability( 'claude/list-plugins', [
+    claude_wp_bridge_register( 'claude/list-plugins', [
         'label'       => 'List Plugins',
         'description' => 'List all installed WordPress plugins with their name, status, version and description.',
         'category'    => 'site',
@@ -690,7 +757,7 @@ add_action( 'wp_abilities_api_init', function () {
     // ───────────────────────────────────────
     // claude/manage-plugin
     // ───────────────────────────────────────
-    wp_register_ability( 'claude/manage-plugin', [
+    claude_wp_bridge_register( 'claude/manage-plugin', [
         'label'       => 'Manage Plugin',
         'description' => 'Activate or deactivate a WordPress plugin by its slug (e.g. "akismet/akismet.php").',
         'category'    => 'site',
@@ -746,7 +813,7 @@ add_action( 'wp_abilities_api_init', function () {
     // ───────────────────────────────────────
     // claude/site-map
     // ───────────────────────────────────────
-    wp_register_ability( 'claude/site-map', [
+    claude_wp_bridge_register( 'claude/site-map', [
         'label'       => 'Site Map',
         'description' => 'Returns a complete overview of the site: name, URL, WordPress version, active theme, and all pages.',
         'category'    => 'site',
@@ -792,7 +859,7 @@ add_action( 'wp_abilities_api_init', function () {
     // ───────────────────────────────────────
     // claude/elementor-list
     // ───────────────────────────────────────
-    wp_register_ability( 'claude/elementor-list', [
+    claude_wp_bridge_register( 'claude/elementor-list', [
         'label'       => 'List Elementor Documents',
         'description' => 'List every post built with Elementor — pages, posts and Elementor templates such as headers, footers and popups — with ID, title, post type, template type and status.',
         'category'    => 'site',
@@ -853,7 +920,7 @@ add_action( 'wp_abilities_api_init', function () {
     // ───────────────────────────────────────
     // claude/elementor-get
     // ───────────────────────────────────────
-    wp_register_ability( 'claude/elementor-get', [
+    claude_wp_bridge_register( 'claude/elementor-get', [
         'label'       => 'Get Elementor Data',
         'description' => 'Read the Elementor structure of a post. "outline" (default) lists every element with its id, type, depth and a text preview; "full" returns the complete elements JSON; element_id returns a single element with all its settings. Also lists the stored backups.',
         'category'    => 'site',
@@ -917,7 +984,7 @@ add_action( 'wp_abilities_api_init', function () {
     // ───────────────────────────────────────
     // claude/elementor-update-element
     // ───────────────────────────────────────
-    wp_register_ability( 'claude/elementor-update-element', [
+    claude_wp_bridge_register( 'claude/elementor-update-element', [
         'label'       => 'Update Elementor Element',
         'description' => 'Change the settings of one Elementor element (e.g. a heading text, an image, a button link) without resending the whole page. The given keys are merged into the element settings; other settings stay as they are. Backs up the page first and flushes caches.',
         'category'    => 'site',
@@ -968,7 +1035,7 @@ add_action( 'wp_abilities_api_init', function () {
     // ───────────────────────────────────────
     // claude/elementor-save
     // ───────────────────────────────────────
-    wp_register_ability( 'claude/elementor-save', [
+    claude_wp_bridge_register( 'claude/elementor-save', [
         'label'       => 'Save Elementor Data',
         'description' => 'Replace the whole Elementor elements JSON of a post (e.g. to add, remove or reorder sections). Get the current JSON with claude/elementor-get format "full" first. Backs up the page first and flushes caches.',
         'category'    => 'site',
@@ -1029,7 +1096,7 @@ add_action( 'wp_abilities_api_init', function () {
     // ───────────────────────────────────────
     // claude/elementor-restore
     // ───────────────────────────────────────
-    wp_register_ability( 'claude/elementor-restore', [
+    claude_wp_bridge_register( 'claude/elementor-restore', [
         'label'       => 'Restore Elementor Backup',
         'description' => 'Put back a backup taken before an earlier claude/elementor-* write. Without backup_id it restores the most recent one. The restore itself is backed up first, so it can be undone the same way.',
         'category'    => 'site',
@@ -1089,7 +1156,7 @@ add_action( 'wp_abilities_api_init', function () {
     // ───────────────────────────────────────
     // claude/elementor-create
     // ───────────────────────────────────────
-    wp_register_ability( 'claude/elementor-create', [
+    claude_wp_bridge_register( 'claude/elementor-create', [
         'label'       => 'Create Elementor Document',
         'description' => 'Create an empty Elementor document: a page ("wp-page"), a post ("wp-post") or a template such as "loop-item", "archive", "single-post", "header", "footer" or "section". For a loop item, "source" sets what it loops over: "post" (the default) or "post_taxonomy" (categories and tags). Fill it afterwards with claude/elementor-save.',
         'category'    => 'site',
@@ -1152,7 +1219,7 @@ add_action( 'wp_abilities_api_init', function () {
     // ───────────────────────────────────────
     // claude/elementor-set-conditions
     // ───────────────────────────────────────
-    wp_register_ability( 'claude/elementor-set-conditions', [
+    claude_wp_bridge_register( 'claude/elementor-set-conditions', [
         'label'       => 'Set Theme Builder Conditions',
         'description' => 'Set where a theme-builder template (header, footer, archive, single…) is displayed. Each condition is "include|exclude/<name>/<sub_name>/<id>", e.g. "include/archive/category/125" or "include/archive/any_child_of_category/125". The list replaces the current one; an empty list removes them all, which takes the template off the site. Flushes the whole page cache.',
         'category'    => 'site',
@@ -1211,7 +1278,7 @@ add_action( 'wp_abilities_api_init', function () {
     // ───────────────────────────────────────
     // claude/elementor-flush
     // ───────────────────────────────────────
-    wp_register_ability( 'claude/elementor-flush', [
+    claude_wp_bridge_register( 'claude/elementor-flush', [
         'label'       => 'Flush Elementor and Page Cache',
         'description' => 'Regenerate Elementor CSS and purge LiteSpeed Cache. With post_id it flushes that post (or the whole site if it is an Elementor template); without it, the whole site. The claude/elementor-* writes already do this.',
         'category'    => 'site',
@@ -1247,3 +1314,205 @@ add_action( 'wp_abilities_api_init', function () {
     ] );
 
 } );
+
+// ───────────────────────────────────────
+// Settings screen: Settings → Claude WP Bridge
+// ───────────────────────────────────────
+//
+// Creates the Application Password Claude Code connects with and shows it once,
+// ready to paste into the .env file on that computer, so it never has to travel
+// through a chat. WordPress keeps only its hash; this plugin stores nothing.
+// Also lists and revokes Application Passwords and switches the tool groups.
+
+const CLAUDE_WP_BRIDGE_APP_PREFIX = 'Claude WP Bridge';
+
+add_action( 'admin_menu', function () {
+    add_options_page( 'Claude WP Bridge', 'Claude WP Bridge', 'manage_options', 'claude-wp-bridge', 'claude_wp_bridge_settings_page' );
+} );
+
+add_filter( 'plugin_action_links_' . plugin_basename( __FILE__ ), function ( $links ) {
+    array_unshift( $links, '<a href="' . esc_url( admin_url( 'options-general.php?page=claude-wp-bridge' ) ) . '">Settings</a>' );
+    return $links;
+} );
+
+// Handles the three forms of the screen. Returns [ notice, new .env text or null ].
+function claude_wp_bridge_settings_actions() {
+    $action = sanitize_key( $_POST['claude_wp_bridge_action'] ?? '' );
+    if ( ! in_array( $action, [ 'groups', 'create', 'revoke' ], true ) ) {
+        return [ null, null ];
+    }
+    check_admin_referer( 'claude_wp_bridge_' . $action );
+
+    if ( $action === 'groups' ) {
+        $posted = array_map( 'sanitize_key', (array) wp_unslash( $_POST['groups'] ?? [] ) );
+        $saved  = [];
+        foreach ( array_keys( claude_wp_bridge_groups() ) as $key ) {
+            $saved[ $key ] = in_array( $key, $posted, true );
+        }
+        update_option( 'claude_wp_bridge_groups', $saved, false );
+        return [ [ 'success', 'Tool groups saved. They apply from the next request.' ], null ];
+    }
+
+    if ( $action === 'create' ) {
+        $user = wp_get_current_user();
+        if ( ! wp_is_application_passwords_available_for_user( $user ) ) {
+            return [ [ 'error', 'Application Passwords are not available for this user or this site (WordPress requires HTTPS for them).' ], null ];
+        }
+        $created = WP_Application_Passwords::create_new_application_password( $user->ID, [
+            'name' => CLAUDE_WP_BRIDGE_APP_PREFIX . ' – ' . wp_date( 'Y-m-d H:i' ),
+        ] );
+        if ( is_wp_error( $created ) ) {
+            return [ [ 'error', $created->get_error_message() ], null ];
+        }
+        $env = 'WP_URL=' . untrailingslashit( home_url() ) . "\n"
+            . 'WP_USER=' . $user->user_login . "\n"
+            . 'WP_APP_PASSWORD="' . WP_Application_Passwords::chunk_password( $created[0] ) . "\"\n";
+        return [ [ 'success', 'Access created.' ], $env ];
+    }
+
+    $user_id = (int) ( $_POST['user_id'] ?? 0 );
+    $uuid    = sanitize_text_field( wp_unslash( $_POST['uuid'] ?? '' ) );
+    if ( ! current_user_can( 'edit_user', $user_id ) ) {
+        return [ [ 'error', 'You cannot manage the Application Passwords of that user.' ], null ];
+    }
+    $deleted = WP_Application_Passwords::delete_application_password( $user_id, $uuid );
+    if ( is_wp_error( $deleted ) ) {
+        return [ [ 'error', $deleted->get_error_message() ], null ];
+    }
+    return [ [ 'success', 'Access revoked. Whoever used that password can no longer connect.' ], null ];
+}
+
+function claude_wp_bridge_settings_page() {
+    if ( ! current_user_can( 'manage_options' ) ) {
+        return;
+    }
+    list( $notice, $new_env ) = claude_wp_bridge_settings_actions();
+
+    $version = get_file_data( __FILE__, [ 'Version' => 'Version' ] )['Version'];
+    $groups  = claude_wp_bridge_groups();
+    $enabled = claude_wp_bridge_enabled_groups();
+    $page    = admin_url( 'options-general.php?page=claude-wp-bridge' );
+
+    $active = [];
+    if ( function_exists( 'wp_get_abilities' ) ) {
+        foreach ( wp_get_abilities() as $ability ) {
+            $name = is_object( $ability ) && method_exists( $ability, 'get_name' ) ? $ability->get_name() : (string) $ability;
+            if ( strpos( $name, 'claude/' ) === 0 ) {
+                $active[] = $name;
+            }
+        }
+    }
+
+    $rows = [];
+    $meta = class_exists( 'WP_Application_Passwords' ) ? WP_Application_Passwords::USERMETA_KEY_APPLICATION_PASSWORDS : '';
+    foreach ( $meta ? get_users( [ 'meta_key' => $meta ] ) : [] as $user ) {
+        foreach ( WP_Application_Passwords::get_user_application_passwords( $user->ID ) as $item ) {
+            $rows[] = [ 'user' => $user, 'item' => $item ];
+        }
+    }
+    usort( $rows, function ( $a, $b ) {
+        return (int) $b['item']['created'] <=> (int) $a['item']['created'];
+    } );
+    $when = function ( $timestamp ) {
+        return $timestamp ? wp_date( 'Y-m-d H:i', (int) $timestamp ) : 'Never';
+    };
+    ?>
+    <div class="wrap">
+        <h1>Claude WP Bridge <span style="font-size:13px;color:#646970;">v<?php echo esc_html( $version ); ?></span></h1>
+
+        <?php if ( $notice ) : ?>
+            <div class="notice notice-<?php echo esc_attr( $notice[0] ); ?>"><p><?php echo esc_html( $notice[1] ); ?></p></div>
+        <?php endif; ?>
+
+        <?php if ( $new_env ) : ?>
+            <div class="notice notice-warning" style="padding:12px 16px;">
+                <p><strong>Copy this now: it will not be shown again.</strong> Save it as the <code>.env</code> file Claude Code reads on your computer. Do not paste it into the chat.</p>
+                <textarea id="claude-wp-bridge-env" readonly rows="4" style="width:100%;max-width:640px;font-family:monospace;"><?php echo esc_textarea( $new_env ); ?></textarea>
+                <p>
+                    <button type="button" class="button button-primary" onclick="var t=document.getElementById('claude-wp-bridge-env');var b=this;t.select();(navigator.clipboard?navigator.clipboard.writeText(t.value):Promise.reject()).then(function(){b.textContent='Copied';},function(){document.execCommand('copy');b.textContent='Copied';});">Copy</button>
+                </p>
+            </div>
+        <?php endif; ?>
+
+        <h2>Access for Claude</h2>
+        <p>Claude Code connects with an Application Password. Create one here and paste it into the <code>.env</code> file on the computer where Claude runs; WordPress stores only its hash, and this plugin stores nothing.</p>
+        <form method="post" action="<?php echo esc_url( $page ); ?>">
+            <?php wp_nonce_field( 'claude_wp_bridge_create' ); ?>
+            <input type="hidden" name="claude_wp_bridge_action" value="create">
+            <?php submit_button( 'Create access for Claude', 'primary', 'submit', false ); ?>
+            <span class="description">For your user, <?php echo esc_html( wp_get_current_user()->user_login ); ?>.</span>
+        </form>
+
+        <h3>Application Passwords on this site</h3>
+        <?php if ( ! $rows ) : ?>
+            <p>None.</p>
+        <?php else : ?>
+            <table class="widefat striped" style="max-width:980px;">
+                <thead><tr><th>User</th><th>Name</th><th>Created</th><th>Last used</th><th>Last IP</th><th></th></tr></thead>
+                <tbody>
+                <?php foreach ( $rows as $row ) : $item = $row['item']; ?>
+                    <tr>
+                        <td><?php echo esc_html( $row['user']->user_login ); ?></td>
+                        <td>
+                            <?php echo esc_html( $item['name'] ); ?>
+                            <?php if ( strpos( $item['name'], CLAUDE_WP_BRIDGE_APP_PREFIX ) === 0 ) : ?>
+                                <span class="description">(created here)</span>
+                            <?php endif; ?>
+                        </td>
+                        <td><?php echo esc_html( $when( $item['created'] ) ); ?></td>
+                        <td><?php echo esc_html( $when( $item['last_used'] ?? null ) ); ?></td>
+                        <td><?php echo esc_html( $item['last_ip'] ?? '' ); ?></td>
+                        <td>
+                            <form method="post" action="<?php echo esc_url( $page ); ?>" onsubmit="return confirm('Revoke this Application Password? Whoever uses it will lose access.');">
+                                <?php wp_nonce_field( 'claude_wp_bridge_revoke' ); ?>
+                                <input type="hidden" name="claude_wp_bridge_action" value="revoke">
+                                <input type="hidden" name="user_id" value="<?php echo esc_attr( $row['user']->ID ); ?>">
+                                <input type="hidden" name="uuid" value="<?php echo esc_attr( $item['uuid'] ); ?>">
+                                <?php submit_button( 'Revoke', 'delete small', 'submit', false ); ?>
+                            </form>
+                        </td>
+                    </tr>
+                <?php endforeach; ?>
+                </tbody>
+            </table>
+        <?php endif; ?>
+
+        <h2>Tool groups</h2>
+        <p>A group that is off is not registered: its tools cannot be listed or run, whatever password is used.</p>
+        <form method="post" action="<?php echo esc_url( $page ); ?>">
+            <?php wp_nonce_field( 'claude_wp_bridge_groups' ); ?>
+            <input type="hidden" name="claude_wp_bridge_action" value="groups">
+            <table class="form-table" role="presentation">
+                <?php foreach ( $groups as $key => $group ) : ?>
+                    <tr>
+                        <th scope="row"><?php echo esc_html( $group['label'] ); ?></th>
+                        <td>
+                            <label>
+                                <input type="checkbox" name="groups[]" value="<?php echo esc_attr( $key ); ?>" <?php checked( ! empty( $enabled[ $key ] ) ); ?>>
+                                On
+                            </label>
+                            <p class="description"><?php echo esc_html( $group['description'] ); ?></p>
+                            <p class="description"><?php echo implode( ' ', array_map( function ( $ability ) {
+                                return '<code>' . esc_html( $ability ) . '</code>';
+                            }, $group['abilities'] ) ); ?></p>
+                        </td>
+                    </tr>
+                <?php endforeach; ?>
+            </table>
+            <?php submit_button( 'Save tool groups' ); ?>
+        </form>
+
+        <h2>Status</h2>
+        <table class="widefat striped" style="max-width:980px;">
+            <tbody>
+                <tr><td>WordPress</td><td><?php echo esc_html( get_bloginfo( 'version' ) ); ?></td></tr>
+                <tr><td>Abilities API</td><td><?php echo function_exists( 'wp_register_ability' ) ? 'Available' : 'Missing (needs WordPress 7.0+)'; ?></td></tr>
+                <tr><td>MCP Adapter</td><td><?php echo function_exists( 'is_plugin_active' ) && is_plugin_active( 'mcp-adapter/mcp-adapter.php' ) ? 'Active' : 'Not active (only needed for the MCP route; the REST route works without it)'; ?></td></tr>
+                <tr><td>Elementor</td><td><?php echo claude_wp_bridge_elementor_active() ? 'Active' : 'Not active'; ?></td></tr>
+                <tr><td>Claude tools active</td><td><?php echo esc_html( count( $active ) . ' of ' . count( array_merge( ...array_values( wp_list_pluck( $groups, 'abilities' ) ) ) ) ); ?></td></tr>
+                <tr><td>REST endpoint</td><td><code><?php echo esc_html( rest_url( 'wp-abilities/v1/abilities' ) ); ?></code></td></tr>
+            </tbody>
+        </table>
+    </div>
+    <?php
+}
