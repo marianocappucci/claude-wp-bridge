@@ -137,6 +137,8 @@ All tools are under the `claude/` namespace and require admin-level authenticati
 | Activate and deactivate plugins | **off** | `manage-plugin` |
 | Write code files | **off** | `update-theme-file`, `upload-file` |
 
+The screen follows the WordPress language: its strings use the text domain `claude-wp-bridge`, and a Spanish translation ships inside the plugin (so it stays a single file) for any Spanish locale. A translation of your own — made with Loco Translate, for instance — takes precedence.
+
 "Write code files" is off by default because whoever holds an Application Password could use it to run PHP on the site. Switch it on while you need it — for instance, to let Claude update this plugin with `claude/upload-file` — and off again afterwards.
 
 ### Elementor pages
