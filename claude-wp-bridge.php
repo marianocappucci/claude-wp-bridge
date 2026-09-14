@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Claude WP Bridge
  * Description: Exposes WordPress content, theme files, plugin management and Elementor page data as WordPress Abilities for Claude Code via MCP. Replaces Compulibra Manager and Compulibra Auto Upload.
- * Version:     1.3.0
+ * Version:     1.3.1
  * Author:      Mariano Cappucci
  */
 
@@ -241,7 +241,10 @@ function claude_wp_bridge_elementor_save( $post_id, array $elements, $settings =
     if ( $settings !== null ) {
         $data['settings'] = $settings;
     }
-    if ( ! $document->save( $data ) ) {
+    // Only an explicit false is a refusal: Elementor Pro's loop document
+    // overrides save() and drops the parent's return value, so a successful
+    // save of a loop item returns null.
+    if ( false === $document->save( $data ) ) {
         return new WP_Error( 'elementor_save_failed', 'Elementor refused to save the document', [ 'status' => 500 ] );
     }
 
