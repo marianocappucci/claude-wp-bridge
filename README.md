@@ -44,8 +44,10 @@ Install and activate the [MCP Adapter](https://wordpress.org/plugins/mcp-adapter
 
 **First install (bootstrap):** The plugin can't install itself, so the first time must be manual. Two options:
 
-- **wp-admin:** Go to *Plugins → Add New → Upload Plugin*, upload a ZIP of this repository, and activate.
-- **cPanel File Manager / FTP:** Upload `claude-wp-bridge.php` to `wp-content/plugins/claude-wp-bridge/claude-wp-bridge.php` and activate from *Plugins*.
+- **wp-admin (recommended):** Download `claude-wp-bridge.zip` from the [latest release](https://github.com/marianocappucci/claude-wp-bridge/releases/latest), then go to *Plugins → Add New → Upload Plugin*, upload it, and activate.
+- **cPanel File Manager / FTP:** Create the folder `wp-content/plugins/claude-wp-bridge/`, upload `claude-wp-bridge.php` into it, and activate from *Plugins*.
+
+> **Building your own ZIP?** The archive must contain a `claude-wp-bridge/` folder with `claude-wp-bridge.php` inside, using forward slashes (`/`) in its paths. ZIPs created with Windows tools (*Send to → Compressed folder*, PowerShell 5.1 `Compress-Archive`) may store backslashes (`\`): the server then extracts a single file literally named `claude-wp-bridge\claude-wp-bridge.php`, WordPress fails with *"Plugin file does not exist"*, and FTP clients cannot rename or delete that file (use cPanel File Manager to remove it). Build the ZIP on Linux/macOS, or with `python -m zipfile -c claude-wp-bridge.zip claude-wp-bridge/`.
 
 **Updates:** Once active, Claude can update the plugin itself using `claude/upload-file` to overwrite the PHP file. No deactivation needed — the new code loads on the next request.
 
