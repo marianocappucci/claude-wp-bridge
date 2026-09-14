@@ -19,7 +19,7 @@ Claude Code sees **3 fixed MCP tools** from the adapter:
 - `mcp-adapter-get-ability-info` — schema for a specific tool
 - `mcp-adapter-execute-ability` — runs any tool with parameters
 
-This plugin registers 10 **WordPress Abilities** under the `claude/` namespace, which the adapter exposes automatically.
+This plugin registers 16 **WordPress Abilities** under the `claude/` namespace, which the adapter exposes automatically.
 
 ---
 
@@ -113,6 +113,39 @@ All tools are under the `claude/` namespace and require admin-level authenticati
 | `claude/upload-file` | write | Write any file to `plugins/` or `themes/`, with base64 support |
 | `claude/list-plugins` | read | All installed plugins with name, version, status (active/inactive) |
 | `claude/manage-plugin` | write | Activate or deactivate a plugin by slug |
+| `claude/elementor-list` | read | Every post built with Elementor, including templates (headers, footers, popups) |
+| `claude/elementor-get` | read | Elementor structure of a post: outline, full JSON, or one element; plus its backups |
+| `claude/elementor-update-element` | write | Merge new settings into one element (a heading, an image, a button link) |
+| `claude/elementor-save` | write | Replace the whole elements JSON of a post (add, remove or reorder sections) |
+| `claude/elementor-restore` | write | Restore a backup taken before an earlier Elementor write |
+| `claude/elementor-flush` | write | Regenerate Elementor CSS and purge LiteSpeed Cache |
+
+### Elementor pages
+
+Elementor renders a page from the JSON stored in the `_elementor_data` meta. `post_content` only holds a plain-HTML copy, so **`claude/update-page` does not change what an Elementor page shows** — and Elementor overwrites that copy the next time the page is saved in its editor. Use the `claude/elementor-*` tools instead:
+
+1. `claude/elementor-list` to find the post (headers and footers are `elementor_library` templates, not pages).
+2. `claude/elementor-get` with the post ID to see the outline, then with `element_id` to see one element's settings.
+3. `claude/elementor-update-element` to change it, or `claude/elementor-save` for structural changes.
+
+Every write goes through Elementor's own `Document::save()`, which validates the widgets and regenerates the `post_content` copy. Before writing, the current JSON is stored as a backup (the last 10 per post are kept, in the `_claude_elementor_backup` meta), and afterwards the Elementor CSS and LiteSpeed Cache are flushed. Editing a template flushes the whole site, since it appears on every page.
+
+Elementor drops widgets whose type is not registered — for example, widgets from a deactivated plugin — so the write reports how many elements were sent and how many were stored, and adds a `warning` if they differ. Undo any write with `claude/elementor-restore`.
+
+### Calling the tools without MCP
+
+Every ability is also a plain REST endpoint, authenticated with the same Application Password:
+
+```bash
+# Read-only abilities: GET, input as query parameters
+curl -u "user:app-password" -G "https://your-site.com/wp-json/wp-abilities/v1/abilities/claude/elementor-get/run" \
+  --data-urlencode "input[post_id]=34"
+
+# Abilities that write: POST, input as JSON
+curl -u "user:app-password" -X POST -H "Content-Type: application/json" \
+  "https://your-site.com/wp-json/wp-abilities/v1/abilities/claude/elementor-update-element/run" \
+  -d '{"input": {"post_id": 34, "element_id": "a1b2c3d", "settings": {"title": "New heading"}}}'
+```
 
 ---
 
@@ -154,6 +187,7 @@ You: Deploy my updated plugin file
 - The `update-page` ability **bypasses WordPress kses filtering** by design, so raw HTML/CSS/JS is preserved. Only grant Application Passwords to trusted users.
 - The `upload-file` ability is restricted to `plugins/` and `themes/` subdirectories — it cannot write outside `wp-content/`
 - Path traversal (`../`) is stripped from all file path inputs
+- The `claude/elementor-*` abilities check `edit_post` on the target post, and back up its Elementor JSON before every write (last 10 per post, in the `_claude_elementor_backup` meta)
 
 ---
 
