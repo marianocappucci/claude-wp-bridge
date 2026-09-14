@@ -49,7 +49,7 @@ Install and activate the [MCP Adapter](https://wordpress.org/plugins/mcp-adapter
 
 > **Building your own ZIP?** The archive must contain a `claude-wp-bridge/` folder with `claude-wp-bridge.php` inside, using forward slashes (`/`) in its paths. ZIPs created with Windows tools (*Send to → Compressed folder*, PowerShell 5.1 `Compress-Archive`) may store backslashes (`\`): the server then extracts a single file literally named `claude-wp-bridge\claude-wp-bridge.php`, WordPress fails with *"Plugin file does not exist"*, and FTP clients cannot rename or delete that file (use cPanel File Manager to remove it). Build the ZIP on Linux/macOS, or with `python -m zipfile -c claude-wp-bridge.zip claude-wp-bridge/`.
 
-**Updates:** Once active, Claude can update the plugin itself using `claude/upload-file` to overwrite the PHP file. No deactivation needed — the new code loads on the next request.
+**Updates:** Once active, Claude can update the plugin itself using `claude/upload-file` to overwrite the PHP file. No deactivation needed — the new code loads on the next request. From v1.4.0, `upload-file` belongs to the "Write code files" group, which is off by default: switch it on in *Settings → Claude WP Bridge* for the update and off again afterwards.
 
 ### 3. Create an Application Password
 
@@ -121,6 +121,23 @@ All tools are under the `claude/` namespace and require admin-level authenticati
 | `claude/elementor-flush` | write | Regenerate Elementor CSS and purge LiteSpeed Cache |
 | `claude/elementor-create` | write | Create an empty Elementor page, post or template (loop item, archive, header…) |
 | `claude/elementor-set-conditions` | write | Set where a theme-builder template is displayed (e.g. `include/archive/category/125`) |
+
+### Settings screen
+
+*Settings → Claude WP Bridge* (administrators only):
+
+- **Create access for Claude** — creates an Application Password named "Claude WP Bridge – date" for your user and shows it **once**, as the three lines of the `.env` file Claude Code reads (`WP_URL`, `WP_USER`, `WP_APP_PASSWORD`), with a Copy button. Paste it into that file on your computer; it never has to go through a chat. WordPress stores only its hash and the plugin stores nothing.
+- **Application Passwords on this site** — every one, with user, creation date, last use and last IP, and a Revoke button.
+- **Tool groups** — switch groups of tools on and off by risk. A group that is off is not registered, so its tools cannot be listed or run:
+
+| Group | Default | Tools |
+|---|---|---|
+| Read the site | on | `site-map`, `list-pages`, `get-page`, `list-theme-files`, `get-theme-file`, `list-plugins`, `elementor-list`, `elementor-get` |
+| Edit pages and Elementor | on | `update-page`, `elementor-update-element`, `elementor-save`, `elementor-restore`, `elementor-flush`, `elementor-create`, `elementor-set-conditions` |
+| Activate and deactivate plugins | **off** | `manage-plugin` |
+| Write code files | **off** | `update-theme-file`, `upload-file` |
+
+"Write code files" is off by default because whoever holds an Application Password could use it to run PHP on the site. Switch it on while you need it — for instance, to let Claude update this plugin with `claude/upload-file` — and off again afterwards.
 
 ### Elementor pages
 
