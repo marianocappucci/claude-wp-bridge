@@ -249,6 +249,12 @@ function claude_wp_bridge_elementor_save( $post_id, array $elements ) {
 
 add_action( 'wp_abilities_api_init', function () {
 
+    // Abilities that write are annotated 'destructive' => false on purpose. The
+    // REST run endpoint (WP 7.1) calls destructive abilities with DELETE and reads
+    // their input from the query string, which the web server cuts off long before
+    // a page, a theme file or a plugin upload fits. Non-destructive writes go
+    // through POST with a JSON body, which has no such limit.
+
     // ───────────────────────────────────────
     // claude/list-pages
     // ───────────────────────────────────────
@@ -403,7 +409,7 @@ add_action( 'wp_abilities_api_init', function () {
         'meta' => [
             'mcp'          => [ 'public' => true ],
             'show_in_rest' => true,
-            'annotations'  => [ 'readonly' => false, 'destructive' => true, 'idempotent' => false ],
+            'annotations'  => [ 'readonly' => false, 'destructive' => false, 'idempotent' => false ],
         ],
     ] );
 
@@ -541,7 +547,7 @@ add_action( 'wp_abilities_api_init', function () {
         'meta' => [
             'mcp'          => [ 'public' => true ],
             'show_in_rest' => true,
-            'annotations'  => [ 'readonly' => false, 'destructive' => true, 'idempotent' => true ],
+            'annotations'  => [ 'readonly' => false, 'destructive' => false, 'idempotent' => true ],
         ],
     ] );
 
@@ -600,7 +606,7 @@ add_action( 'wp_abilities_api_init', function () {
         'meta' => [
             'mcp'          => [ 'public' => true ],
             'show_in_rest' => true,
-            'annotations'  => [ 'readonly' => false, 'destructive' => true, 'idempotent' => true ],
+            'annotations'  => [ 'readonly' => false, 'destructive' => false, 'idempotent' => true ],
         ],
     ] );
 
@@ -716,7 +722,7 @@ add_action( 'wp_abilities_api_init', function () {
         'meta' => [
             'mcp'          => [ 'public' => true ],
             'show_in_rest' => true,
-            'annotations'  => [ 'readonly' => false, 'destructive' => true, 'idempotent' => false ],
+            'annotations'  => [ 'readonly' => false, 'destructive' => false, 'idempotent' => false ],
         ],
     ] );
 
@@ -935,7 +941,7 @@ add_action( 'wp_abilities_api_init', function () {
         'meta' => [
             'mcp'          => [ 'public' => true ],
             'show_in_rest' => true,
-            'annotations'  => [ 'readonly' => false, 'destructive' => true, 'idempotent' => true ],
+            'annotations'  => [ 'readonly' => false, 'destructive' => false, 'idempotent' => true ],
         ],
     ] );
 
@@ -988,7 +994,7 @@ add_action( 'wp_abilities_api_init', function () {
         'meta' => [
             'mcp'          => [ 'public' => true ],
             'show_in_rest' => true,
-            'annotations'  => [ 'readonly' => false, 'destructive' => true, 'idempotent' => true ],
+            'annotations'  => [ 'readonly' => false, 'destructive' => false, 'idempotent' => true ],
         ],
     ] );
 
@@ -1048,7 +1054,7 @@ add_action( 'wp_abilities_api_init', function () {
         'meta' => [
             'mcp'          => [ 'public' => true ],
             'show_in_rest' => true,
-            'annotations'  => [ 'readonly' => false, 'destructive' => true, 'idempotent' => false ],
+            'annotations'  => [ 'readonly' => false, 'destructive' => false, 'idempotent' => false ],
         ],
     ] );
 
