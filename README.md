@@ -134,15 +134,15 @@ Elementor drops widgets whose type is not registered — for example, widgets fr
 
 ### Calling the tools without MCP
 
-Every ability is also a plain REST endpoint, authenticated with the same Application Password:
+Every ability is also a plain REST endpoint, authenticated with the same Application Password. WordPress picks the HTTP method from the ability's annotations: **GET** for read-only abilities, **DELETE** for destructive ones (every `update-*`, `upload-file`, `manage-plugin`, `elementor-update-element`, `elementor-save` and `elementor-restore`), and **POST** for the rest (`elementor-flush`). Any other method is rejected with `rest_ability_invalid_method`.
 
 ```bash
 # Read-only abilities: GET, input as query parameters
 curl -u "user:app-password" -G "https://your-site.com/wp-json/wp-abilities/v1/abilities/claude/elementor-get/run" \
   --data-urlencode "input[post_id]=34"
 
-# Abilities that write: POST, input as JSON
-curl -u "user:app-password" -X POST -H "Content-Type: application/json" \
+# Destructive abilities: DELETE, input as JSON
+curl -u "user:app-password" -X DELETE -H "Content-Type: application/json" \
   "https://your-site.com/wp-json/wp-abilities/v1/abilities/claude/elementor-update-element/run" \
   -d '{"input": {"post_id": 34, "element_id": "a1b2c3d", "settings": {"title": "New heading"}}}'
 ```
