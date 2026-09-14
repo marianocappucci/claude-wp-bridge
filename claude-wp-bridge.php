@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Claude WP Bridge
  * Description: Exposes WordPress content, theme files, plugin management and Elementor page data as WordPress Abilities for Claude Code via MCP. Replaces Compulibra Manager and Compulibra Auto Upload.
- * Version:     1.2.0
+ * Version:     1.3.0
  * Author:      Mariano Cappucci
  */
 
@@ -213,11 +213,21 @@ function claude_wp_bridge_elementor_flush( $post_id = 0 ) {
     return $flushed;
 }
 
-// Saves $elements through Elementor after backing up the current data, then
-// flushes caches. Reports the element count before and after, because
-// Elementor drops widgets whose type is not registered (e.g. from an inactive
-// plugin) and that loss would otherwise be silent.
-function claude_wp_bridge_elementor_save( $post_id, array $elements ) {
+// "include/archive/category/125" -> the array the theme builder's
+// save_conditions() implodes back into that string; null if it is not one.
+function claude_wp_bridge_elementor_parse_condition( $condition ) {
+    $parts = array_pad( explode( '/', trim( (string) $condition, '/' ) ), 4, '' );
+    if ( count( $parts ) > 4 || ! in_array( $parts[0], [ 'include', 'exclude' ], true ) || $parts[1] === '' ) {
+        return null;
+    }
+    return [ 'type' => $parts[0], 'name' => $parts[1], 'sub_name' => $parts[2], 'sub_id' => $parts[3] ];
+}
+
+// Saves $elements (and, when given, the document settings) through Elementor
+// after backing up the current data, then flushes caches. Reports the element
+// count before and after, because Elementor drops widgets whose type is not
+// registered (e.g. from an inactive plugin) and that loss would otherwise be silent.
+function claude_wp_bridge_elementor_save( $post_id, array $elements, $settings = null ) {
     $backup_id = claude_wp_bridge_elementor_backup( $post_id );
     if ( is_wp_error( $backup_id ) ) {
         return $backup_id;
@@ -227,7 +237,11 @@ function claude_wp_bridge_elementor_save( $post_id, array $elements ) {
     if ( ! $document ) {
         return new WP_Error( 'elementor_document', 'Elementor could not load this post as a document', [ 'status' => 500 ] );
     }
-    if ( ! $document->save( [ 'elements' => $elements ] ) ) {
+    $data = [ 'elements' => $elements ];
+    if ( $settings !== null ) {
+        $data['settings'] = $settings;
+    }
+    if ( ! $document->save( $data ) ) {
         return new WP_Error( 'elementor_save_failed', 'Elementor refused to save the document', [ 'status' => 500 ] );
     }
 
@@ -870,6 +884,9 @@ add_action( 'wp_abilities_api_init', function () {
                 'built_with_elementor' => claude_wp_bridge_elementor_is_built( $post->ID ),
                 'elementor_version'    => (string) get_post_meta( $post->ID, '_elementor_version', true ),
                 'element_count'        => claude_wp_bridge_elementor_count( $elements ),
+                'source'               => (string) get_post_meta( $post->ID, '_elementor_source', true ),
+                'page_settings'        => (array) get_post_meta( $post->ID, '_elementor_page_settings', true ),
+                'conditions'           => is_array( $conditions = get_post_meta( $post->ID, '_elementor_conditions', true ) ) ? array_values( $conditions ) : [],
                 'backups'              => claude_wp_bridge_elementor_backups( $post->ID ),
             ];
 
@@ -966,6 +983,10 @@ add_action( 'wp_abilities_api_init', function () {
                     'default'     => false,
                     'description' => 'Allow turning a post that is not built with Elementor into an Elementor post',
                 ],
+                'settings'      => [
+                    'type'        => 'object',
+                    'description' => 'Optional: document (page) settings, e.g. {"source": "post_taxonomy"} for a loop item. Replaces the stored settings, so send the complete set from claude/elementor-get.',
+                ],
             ],
             'required'             => [ 'post_id', 'elements' ],
             'additionalProperties' => false,
@@ -988,7 +1009,11 @@ add_action( 'wp_abilities_api_init', function () {
                     update_post_meta( $post->ID, '_elementor_template_type', $post->post_type === 'page' ? 'wp-page' : 'wp-post' );
                 }
             }
-            return claude_wp_bridge_elementor_save( $post->ID, (array) $input['elements'] );
+            return claude_wp_bridge_elementor_save(
+                $post->ID,
+                (array) $input['elements'],
+                isset( $input['settings'] ) ? (array) $input['settings'] : null
+            );
         },
         'permission_callback' => fn() => current_user_can( 'edit_pages' ),
         'meta' => [
@@ -1055,6 +1080,128 @@ add_action( 'wp_abilities_api_init', function () {
             'mcp'          => [ 'public' => true ],
             'show_in_rest' => true,
             'annotations'  => [ 'readonly' => false, 'destructive' => false, 'idempotent' => false ],
+        ],
+    ] );
+
+    // ───────────────────────────────────────
+    // claude/elementor-create
+    // ───────────────────────────────────────
+    wp_register_ability( 'claude/elementor-create', [
+        'label'       => 'Create Elementor Document',
+        'description' => 'Create an empty Elementor document: a page ("wp-page"), a post ("wp-post") or a template such as "loop-item", "archive", "single-post", "header", "footer" or "section". For a loop item, "source" sets what it loops over: "post" (the default) or "post_taxonomy" (categories and tags). Fill it afterwards with claude/elementor-save.',
+        'category'    => 'site',
+        'input_schema' => [
+            'type'       => 'object',
+            'properties' => [
+                'template_type' => [ 'type' => 'string', 'description' => 'Elementor document type, e.g. "wp-page", "loop-item" or "archive"' ],
+                'title'         => [ 'type' => 'string', 'description' => 'Title of the new document' ],
+                'status'        => [
+                    'type'        => 'string',
+                    'enum'        => [ 'draft', 'publish', 'private' ],
+                    'default'     => 'draft',
+                    'description' => 'Post status of the new document',
+                ],
+                'source'        => [ 'type' => 'string', 'description' => 'Optional, loop items only: "post" or "post_taxonomy"' ],
+            ],
+            'required'             => [ 'template_type', 'title' ],
+            'additionalProperties' => false,
+        ],
+        'output_schema' => [ 'type' => 'object' ],
+        'execute_callback' => function ( $input ) {
+            if ( ! claude_wp_bridge_elementor_active() ) {
+                return new WP_Error( 'elementor_missing', 'Elementor is not active on this site', [ 'status' => 409 ] );
+            }
+            $document = \Elementor\Plugin::$instance->documents->create( sanitize_key( $input['template_type'] ), [
+                'post_title'  => sanitize_text_field( $input['title'] ),
+                'post_status' => $input['status'] ?? 'draft',
+            ] );
+            if ( is_wp_error( $document ) ) {
+                return $document;
+            }
+            if ( ! $document ) {
+                return new WP_Error( 'elementor_create_failed', 'Elementor could not create the document', [ 'status' => 500 ] );
+            }
+
+            $post_id = $document->get_main_id();
+            if ( ! empty( $input['source'] ) ) {
+                // Loop documents store the source in _elementor_source when it
+                // arrives in the settings of a save.
+                $document->save( [ 'settings' => [ 'source' => sanitize_key( $input['source'] ) ] ] );
+            }
+            return [
+                'success'       => true,
+                'post_id'       => $post_id,
+                'post_type'     => get_post_type( $post_id ),
+                'template_type' => (string) get_post_meta( $post_id, '_elementor_template_type', true ),
+                'source'        => (string) get_post_meta( $post_id, '_elementor_source', true ),
+                'status'        => get_post_status( $post_id ),
+                'url'           => (string) get_permalink( $post_id ),
+            ];
+        },
+        'permission_callback' => fn() => current_user_can( 'edit_pages' ),
+        'meta' => [
+            'mcp'          => [ 'public' => true ],
+            'show_in_rest' => true,
+            'annotations'  => [ 'readonly' => false, 'destructive' => false, 'idempotent' => false ],
+        ],
+    ] );
+
+    // ───────────────────────────────────────
+    // claude/elementor-set-conditions
+    // ───────────────────────────────────────
+    wp_register_ability( 'claude/elementor-set-conditions', [
+        'label'       => 'Set Theme Builder Conditions',
+        'description' => 'Set where a theme-builder template (header, footer, archive, single…) is displayed. Each condition is "include|exclude/<name>/<sub_name>/<id>", e.g. "include/archive/category/125" or "include/archive/any_child_of_category/125". The list replaces the current one; an empty list removes them all, which takes the template off the site. Flushes the whole page cache.',
+        'category'    => 'site',
+        'input_schema' => [
+            'type'       => 'object',
+            'properties' => [
+                'post_id'    => [ 'type' => 'integer', 'description' => 'Theme-builder template ID' ],
+                'conditions' => [
+                    'type'        => 'array',
+                    'items'       => [ 'type' => 'string' ],
+                    'description' => 'Conditions such as "include/archive/category/125"; empty to remove them all',
+                ],
+            ],
+            'required'             => [ 'post_id', 'conditions' ],
+            'additionalProperties' => false,
+        ],
+        'output_schema' => [ 'type' => 'object' ],
+        'execute_callback' => function ( $input ) {
+            if ( ! class_exists( '\ElementorPro\Modules\ThemeBuilder\Module' ) ) {
+                return new WP_Error( 'theme_builder_missing', 'The Elementor Pro theme builder is not active on this site', [ 'status' => 409 ] );
+            }
+            $post = claude_wp_bridge_elementor_target( $input );
+            if ( is_wp_error( $post ) ) {
+                return $post;
+            }
+
+            $parsed = [];
+            foreach ( (array) $input['conditions'] as $condition ) {
+                $one = claude_wp_bridge_elementor_parse_condition( $condition );
+                if ( $one === null ) {
+                    return new WP_Error( 'invalid_condition', "Invalid condition: $condition", [ 'status' => 400 ] );
+                }
+                $parsed[] = $one;
+            }
+
+            $previous = get_post_meta( $post->ID, '_elementor_conditions', true );
+            \ElementorPro\Modules\ThemeBuilder\Module::instance()->get_conditions_manager()->save_conditions( $post->ID, $parsed );
+            $stored = get_post_meta( $post->ID, '_elementor_conditions', true );
+
+            return [
+                'success'    => true,
+                'post_id'    => $post->ID,
+                'previous'   => is_array( $previous ) ? array_values( $previous ) : [],
+                'conditions' => is_array( $stored ) ? array_values( $stored ) : [],
+                'flushed'    => claude_wp_bridge_elementor_flush( 0 ),
+            ];
+        },
+        'permission_callback' => fn() => current_user_can( 'edit_pages' ),
+        'meta' => [
+            'mcp'          => [ 'public' => true ],
+            'show_in_rest' => true,
+            'annotations'  => [ 'readonly' => false, 'destructive' => false, 'idempotent' => true ],
         ],
     ] );
 
