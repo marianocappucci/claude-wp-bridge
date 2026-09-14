@@ -1,12 +1,251 @@
 <?php
 /**
  * Plugin Name: Claude WP Bridge
- * Description: Exposes WordPress content, theme files and plugin management as WordPress Abilities for Claude Code via MCP. Replaces Compulibra Manager and Compulibra Auto Upload.
- * Version:     1.1.0
+ * Description: Exposes WordPress content, theme files, plugin management and Elementor page data as WordPress Abilities for Claude Code via MCP. Replaces Compulibra Manager and Compulibra Auto Upload.
+ * Version:     1.2.0
  * Author:      Mariano Cappucci
  */
 
 if ( ! defined( 'ABSPATH' ) ) exit;
+
+// ───────────────────────────────────────
+// Elementor helpers
+// ───────────────────────────────────────
+//
+// Elementor renders a page from the JSON in the _elementor_data meta, not from
+// post_content (which only holds a plain-HTML copy), so claude/update-page does
+// not change what an Elementor page shows. The claude/elementor-* abilities below
+// edit that JSON through Elementor's own Document::save(), which validates the
+// widgets and regenerates the post_content copy.
+
+// Snapshots of _elementor_data kept per post before every write.
+if ( ! defined( 'CLAUDE_WP_BRIDGE_ELEMENTOR_BACKUPS' ) ) {
+    define( 'CLAUDE_WP_BRIDGE_ELEMENTOR_BACKUPS', 10 );
+}
+
+function claude_wp_bridge_elementor_active() {
+    return class_exists( '\Elementor\Plugin' ) && isset( \Elementor\Plugin::$instance );
+}
+
+// Resolves input['post_id'] to a post the current user may edit.
+function claude_wp_bridge_elementor_target( $input ) {
+    $post = get_post( intval( $input['post_id'] ?? 0 ) );
+    if ( ! $post ) {
+        return new WP_Error( 'not_found', 'Post not found', [ 'status' => 404 ] );
+    }
+    if ( ! current_user_can( 'edit_post', $post->ID ) ) {
+        return new WP_Error( 'forbidden', 'You cannot edit this post', [ 'status' => 403 ] );
+    }
+    return $post;
+}
+
+function claude_wp_bridge_elementor_is_built( $post_id ) {
+    return get_post_meta( $post_id, '_elementor_edit_mode', true ) === 'builder';
+}
+
+function claude_wp_bridge_elementor_elements( $post_id ) {
+    $raw = get_post_meta( $post_id, '_elementor_data', true );
+    if ( is_array( $raw ) ) {
+        return $raw;
+    }
+    $data = ( is_string( $raw ) && $raw !== '' ) ? json_decode( $raw, true ) : [];
+    return is_array( $data ) ? $data : [];
+}
+
+function claude_wp_bridge_elementor_count( array $elements ) {
+    $count = 0;
+    foreach ( $elements as $el ) {
+        if ( ! is_array( $el ) ) continue;
+        $count++;
+        if ( ! empty( $el['elements'] ) && is_array( $el['elements'] ) ) {
+            $count += claude_wp_bridge_elementor_count( $el['elements'] );
+        }
+    }
+    return $count;
+}
+
+// Short readable preview of a widget's settings, for the outline.
+function claude_wp_bridge_elementor_preview( array $settings ) {
+    foreach ( [ 'title', 'editor', 'text', 'title_text', 'description_text', 'link_text', 'button_text', 'html' ] as $key ) {
+        $value = $settings[ $key ] ?? null;
+        // Elementor v4 atomic widgets wrap values as { "$$type": ..., "value": ... }.
+        if ( is_array( $value ) && isset( $value['value'] ) && is_string( $value['value'] ) ) {
+            $value = $value['value'];
+        }
+        if ( is_string( $value ) ) {
+            $text = trim( preg_replace( '/\s+/', ' ', wp_strip_all_tags( $value ) ) );
+            if ( $text !== '' ) {
+                return mb_substr( $text, 0, 120 );
+            }
+        }
+    }
+    if ( ! empty( $settings['image']['url'] ) && is_string( $settings['image']['url'] ) ) {
+        return 'image: ' . $settings['image']['url'];
+    }
+    return '';
+}
+
+// Flat list of every element: id, type, nesting depth and a text preview.
+function claude_wp_bridge_elementor_outline( array $elements, $depth = 0 ) {
+    $outline = [];
+    foreach ( $elements as $el ) {
+        if ( ! is_array( $el ) ) continue;
+        $settings  = ( isset( $el['settings'] ) && is_array( $el['settings'] ) ) ? $el['settings'] : [];
+        $outline[] = [
+            'id'    => (string) ( $el['id'] ?? '' ),
+            'type'  => (string) ( $el['widgetType'] ?? ( $el['elType'] ?? '' ) ),
+            'depth' => $depth,
+            'text'  => claude_wp_bridge_elementor_preview( $settings ),
+        ];
+        if ( ! empty( $el['elements'] ) && is_array( $el['elements'] ) ) {
+            $outline = array_merge( $outline, claude_wp_bridge_elementor_outline( $el['elements'], $depth + 1 ) );
+        }
+    }
+    return $outline;
+}
+
+function claude_wp_bridge_elementor_find( array $elements, $element_id ) {
+    foreach ( $elements as $el ) {
+        if ( ! is_array( $el ) ) continue;
+        if ( (string) ( $el['id'] ?? '' ) === $element_id ) {
+            return $el;
+        }
+        if ( ! empty( $el['elements'] ) && is_array( $el['elements'] ) ) {
+            $found = claude_wp_bridge_elementor_find( $el['elements'], $element_id );
+            if ( $found !== null ) {
+                return $found;
+            }
+        }
+    }
+    return null;
+}
+
+// Merges $settings into the element with $element_id. Returns the previous
+// values of the keys it touched, or null when the element does not exist.
+function claude_wp_bridge_elementor_patch( array &$elements, $element_id, array $settings ) {
+    foreach ( $elements as &$el ) {
+        if ( ! is_array( $el ) ) continue;
+        if ( (string) ( $el['id'] ?? '' ) === $element_id ) {
+            $current  = ( isset( $el['settings'] ) && is_array( $el['settings'] ) ) ? $el['settings'] : [];
+            $previous = [];
+            foreach ( array_keys( $settings ) as $key ) {
+                $previous[ $key ] = $current[ $key ] ?? null;
+            }
+            $el['settings'] = array_merge( $current, $settings );
+            return $previous;
+        }
+        if ( ! empty( $el['elements'] ) && is_array( $el['elements'] ) ) {
+            $previous = claude_wp_bridge_elementor_patch( $el['elements'], $element_id, $settings );
+            if ( $previous !== null ) {
+                return $previous;
+            }
+        }
+    }
+    unset( $el );
+    return null;
+}
+
+// Stores the current _elementor_data as a backup row and prunes the oldest ones.
+// Returns the backup's meta_id.
+function claude_wp_bridge_elementor_backup( $post_id ) {
+    global $wpdb;
+    $raw = get_post_meta( $post_id, '_elementor_data', true );
+    $meta_id = add_post_meta( $post_id, '_claude_elementor_backup', wp_slash( [
+        'time' => current_time( 'mysql' ),
+        'user' => wp_get_current_user()->user_login,
+        'data' => is_array( $raw ) ? wp_json_encode( $raw ) : (string) $raw,
+    ] ) );
+    if ( ! $meta_id ) {
+        return new WP_Error( 'backup_failed', 'Could not back up the current Elementor data; nothing was saved', [ 'status' => 500 ] );
+    }
+    $ids = $wpdb->get_col( $wpdb->prepare(
+        "SELECT meta_id FROM {$wpdb->postmeta} WHERE post_id = %d AND meta_key = %s ORDER BY meta_id DESC",
+        $post_id,
+        '_claude_elementor_backup'
+    ) );
+    foreach ( array_slice( $ids, CLAUDE_WP_BRIDGE_ELEMENTOR_BACKUPS ) as $old_id ) {
+        delete_metadata_by_mid( 'post', $old_id );
+    }
+    return (int) $meta_id;
+}
+
+function claude_wp_bridge_elementor_backups( $post_id ) {
+    global $wpdb;
+    $rows = $wpdb->get_results( $wpdb->prepare(
+        "SELECT meta_id, meta_value FROM {$wpdb->postmeta} WHERE post_id = %d AND meta_key = %s ORDER BY meta_id DESC",
+        $post_id,
+        '_claude_elementor_backup'
+    ) );
+    return array_map( function ( $row ) {
+        $backup = maybe_unserialize( $row->meta_value );
+        return [
+            'backup_id' => (int) $row->meta_id,
+            'time'      => (string) ( $backup['time'] ?? '' ),
+            'user'      => (string) ( $backup['user'] ?? '' ),
+            'bytes'     => strlen( (string) ( $backup['data'] ?? '' ) ),
+        ];
+    }, $rows );
+}
+
+// Regenerates Elementor CSS and purges LiteSpeed Cache. Templates (headers,
+// footers, popups) appear on every page, so they flush the whole site.
+function claude_wp_bridge_elementor_flush( $post_id = 0 ) {
+    $flushed   = [];
+    $site_wide = ! $post_id || get_post_type( $post_id ) === 'elementor_library';
+
+    if ( claude_wp_bridge_elementor_active() ) {
+        if ( ! $site_wide && class_exists( '\Elementor\Core\Files\CSS\Post' ) ) {
+            \Elementor\Core\Files\CSS\Post::create( $post_id )->delete();
+            $flushed[] = 'elementor-post-css';
+        } else {
+            \Elementor\Plugin::$instance->files_manager->clear_cache();
+            $flushed[] = 'elementor-all-css';
+        }
+    }
+
+    if ( ! $site_wide && has_action( 'litespeed_purge_post' ) ) {
+        do_action( 'litespeed_purge_post', $post_id );
+        $flushed[] = 'litespeed-post';
+    } elseif ( has_action( 'litespeed_purge_all' ) ) {
+        do_action( 'litespeed_purge_all' );
+        $flushed[] = 'litespeed-all';
+    }
+    return $flushed;
+}
+
+// Saves $elements through Elementor after backing up the current data, then
+// flushes caches. Reports the element count before and after, because
+// Elementor drops widgets whose type is not registered (e.g. from an inactive
+// plugin) and that loss would otherwise be silent.
+function claude_wp_bridge_elementor_save( $post_id, array $elements ) {
+    $backup_id = claude_wp_bridge_elementor_backup( $post_id );
+    if ( is_wp_error( $backup_id ) ) {
+        return $backup_id;
+    }
+
+    $document = \Elementor\Plugin::$instance->documents->get( $post_id, false );
+    if ( ! $document ) {
+        return new WP_Error( 'elementor_document', 'Elementor could not load this post as a document', [ 'status' => 500 ] );
+    }
+    if ( ! $document->save( [ 'elements' => $elements ] ) ) {
+        return new WP_Error( 'elementor_save_failed', 'Elementor refused to save the document', [ 'status' => 500 ] );
+    }
+
+    $sent   = claude_wp_bridge_elementor_count( $elements );
+    $stored = claude_wp_bridge_elementor_count( claude_wp_bridge_elementor_elements( $post_id ) );
+    $result = [
+        'success'        => true,
+        'post_id'        => $post_id,
+        'backup_id'      => $backup_id,
+        'elements_sent'  => $sent,
+        'elements_saved' => $stored,
+        'flushed'        => claude_wp_bridge_elementor_flush( $post_id ),
+    ];
+    if ( $stored !== $sent ) {
+        $result['warning'] = "Elementor stored $stored elements but $sent were sent. Restore with claude/elementor-restore and backup_id $backup_id if content was lost.";
+    }
+    return $result;
+}
 
 add_action( 'wp_abilities_api_init', function () {
 
@@ -524,6 +763,330 @@ add_action( 'wp_abilities_api_init', function () {
             'mcp'          => [ 'public' => true ],
             'show_in_rest' => true,
             'annotations'  => [ 'readonly' => true, 'destructive' => false, 'idempotent' => true ],
+        ],
+    ] );
+
+    // ───────────────────────────────────────
+    // claude/elementor-list
+    // ───────────────────────────────────────
+    wp_register_ability( 'claude/elementor-list', [
+        'label'       => 'List Elementor Documents',
+        'description' => 'List every post built with Elementor — pages, posts and Elementor templates such as headers, footers and popups — with ID, title, post type, template type and status.',
+        'category'    => 'site',
+        'input_schema' => [
+            'type'       => 'object',
+            'properties' => [
+                'post_type' => [ 'type' => 'string', 'description' => 'Optional: only this post type, e.g. "page" or "elementor_library"' ],
+            ],
+            'additionalProperties' => false,
+        ],
+        'output_schema' => [
+            'type'  => 'array',
+            'items' => [
+                'type'       => 'object',
+                'properties' => [
+                    'id'            => [ 'type' => 'integer' ],
+                    'title'         => [ 'type' => 'string' ],
+                    'post_type'     => [ 'type' => 'string' ],
+                    'template_type' => [ 'type' => 'string' ],
+                    'status'        => [ 'type' => 'string' ],
+                    'url'           => [ 'type' => 'string' ],
+                ],
+            ],
+        ],
+        'execute_callback' => function ( $input ) {
+            // 'any' would skip elementor_library, which is excluded from search.
+            $types = ! empty( $input['post_type'] )
+                ? [ sanitize_key( $input['post_type'] ) ]
+                : array_values( array_unique( array_merge( get_post_types( [ 'public' => true ] ), [ 'elementor_library' ] ) ) );
+            $posts = get_posts( [
+                'post_type'   => $types,
+                'post_status' => [ 'publish', 'draft', 'pending', 'private', 'future' ],
+                'numberposts' => -1,
+                'meta_key'    => '_elementor_edit_mode',
+                'meta_value'  => 'builder',
+                'orderby'     => 'ID',
+                'order'       => 'ASC',
+            ] );
+            return array_map( function ( $p ) {
+                return [
+                    'id'            => $p->ID,
+                    'title'         => $p->post_title,
+                    'post_type'     => $p->post_type,
+                    'template_type' => (string) get_post_meta( $p->ID, '_elementor_template_type', true ),
+                    'status'        => $p->post_status,
+                    'url'           => (string) get_permalink( $p->ID ),
+                ];
+            }, $posts );
+        },
+        'permission_callback' => fn() => current_user_can( 'edit_pages' ),
+        'meta' => [
+            'mcp'          => [ 'public' => true ],
+            'show_in_rest' => true,
+            'annotations'  => [ 'readonly' => true, 'destructive' => false, 'idempotent' => true ],
+        ],
+    ] );
+
+    // ───────────────────────────────────────
+    // claude/elementor-get
+    // ───────────────────────────────────────
+    wp_register_ability( 'claude/elementor-get', [
+        'label'       => 'Get Elementor Data',
+        'description' => 'Read the Elementor structure of a post. "outline" (default) lists every element with its id, type, depth and a text preview; "full" returns the complete elements JSON; element_id returns a single element with all its settings. Also lists the stored backups.',
+        'category'    => 'site',
+        'input_schema' => [
+            'type'       => 'object',
+            'properties' => [
+                'post_id'    => [ 'type' => 'integer', 'description' => 'Page, post or Elementor template ID' ],
+                'element_id' => [ 'type' => 'string', 'description' => 'Optional: return only this element, with all its settings' ],
+                'format'     => [
+                    'type'        => 'string',
+                    'enum'        => [ 'outline', 'full' ],
+                    'default'     => 'outline',
+                    'description' => 'outline = compact element list; full = complete elements JSON',
+                ],
+            ],
+            'required'             => [ 'post_id' ],
+            'additionalProperties' => false,
+        ],
+        'output_schema' => [ 'type' => 'object' ],
+        'execute_callback' => function ( $input ) {
+            $post = claude_wp_bridge_elementor_target( $input );
+            if ( is_wp_error( $post ) ) {
+                return $post;
+            }
+            $elements = claude_wp_bridge_elementor_elements( $post->ID );
+            $result   = [
+                'post_id'              => $post->ID,
+                'title'                => $post->post_title,
+                'post_type'            => $post->post_type,
+                'template_type'        => (string) get_post_meta( $post->ID, '_elementor_template_type', true ),
+                'built_with_elementor' => claude_wp_bridge_elementor_is_built( $post->ID ),
+                'elementor_version'    => (string) get_post_meta( $post->ID, '_elementor_version', true ),
+                'element_count'        => claude_wp_bridge_elementor_count( $elements ),
+                'backups'              => claude_wp_bridge_elementor_backups( $post->ID ),
+            ];
+
+            if ( ! empty( $input['element_id'] ) ) {
+                $element = claude_wp_bridge_elementor_find( $elements, (string) $input['element_id'] );
+                if ( $element === null ) {
+                    return new WP_Error( 'element_not_found', 'Element not found: ' . $input['element_id'], [ 'status' => 404 ] );
+                }
+                $result['element'] = $element;
+            } elseif ( ( $input['format'] ?? 'outline' ) === 'full' ) {
+                $result['elements'] = $elements;
+            } else {
+                $result['outline'] = claude_wp_bridge_elementor_outline( $elements );
+            }
+            return $result;
+        },
+        'permission_callback' => fn() => current_user_can( 'edit_pages' ),
+        'meta' => [
+            'mcp'          => [ 'public' => true ],
+            'show_in_rest' => true,
+            'annotations'  => [ 'readonly' => true, 'destructive' => false, 'idempotent' => true ],
+        ],
+    ] );
+
+    // ───────────────────────────────────────
+    // claude/elementor-update-element
+    // ───────────────────────────────────────
+    wp_register_ability( 'claude/elementor-update-element', [
+        'label'       => 'Update Elementor Element',
+        'description' => 'Change the settings of one Elementor element (e.g. a heading text, an image, a button link) without resending the whole page. The given keys are merged into the element settings; other settings stay as they are. Backs up the page first and flushes caches.',
+        'category'    => 'site',
+        'input_schema' => [
+            'type'       => 'object',
+            'properties' => [
+                'post_id'    => [ 'type' => 'integer', 'description' => 'Page, post or Elementor template ID' ],
+                'element_id' => [ 'type' => 'string', 'description' => 'Element id, from claude/elementor-get' ],
+                'settings'   => [ 'type' => 'object', 'description' => 'Settings keys to set, e.g. {"title": "New heading"}' ],
+            ],
+            'required'             => [ 'post_id', 'element_id', 'settings' ],
+            'additionalProperties' => false,
+        ],
+        'output_schema' => [ 'type' => 'object' ],
+        'execute_callback' => function ( $input ) {
+            if ( ! claude_wp_bridge_elementor_active() ) {
+                return new WP_Error( 'elementor_missing', 'Elementor is not active on this site', [ 'status' => 409 ] );
+            }
+            $post = claude_wp_bridge_elementor_target( $input );
+            if ( is_wp_error( $post ) ) {
+                return $post;
+            }
+            if ( ! claude_wp_bridge_elementor_is_built( $post->ID ) ) {
+                return new WP_Error( 'not_elementor', 'This post is not built with Elementor', [ 'status' => 409 ] );
+            }
+
+            $elements = claude_wp_bridge_elementor_elements( $post->ID );
+            $previous = claude_wp_bridge_elementor_patch( $elements, (string) $input['element_id'], (array) $input['settings'] );
+            if ( $previous === null ) {
+                return new WP_Error( 'element_not_found', 'Element not found: ' . $input['element_id'], [ 'status' => 404 ] );
+            }
+
+            $result = claude_wp_bridge_elementor_save( $post->ID, $elements );
+            if ( is_wp_error( $result ) ) {
+                return $result;
+            }
+            $result['previous'] = $previous;
+            return $result;
+        },
+        'permission_callback' => fn() => current_user_can( 'edit_pages' ),
+        'meta' => [
+            'mcp'          => [ 'public' => true ],
+            'show_in_rest' => true,
+            'annotations'  => [ 'readonly' => false, 'destructive' => true, 'idempotent' => true ],
+        ],
+    ] );
+
+    // ───────────────────────────────────────
+    // claude/elementor-save
+    // ───────────────────────────────────────
+    wp_register_ability( 'claude/elementor-save', [
+        'label'       => 'Save Elementor Data',
+        'description' => 'Replace the whole Elementor elements JSON of a post (e.g. to add, remove or reorder sections). Get the current JSON with claude/elementor-get format "full" first. Backs up the page first and flushes caches.',
+        'category'    => 'site',
+        'input_schema' => [
+            'type'       => 'object',
+            'properties' => [
+                'post_id'       => [ 'type' => 'integer', 'description' => 'Page, post or Elementor template ID' ],
+                'elements'      => [
+                    'type'        => 'array',
+                    'items'       => [ 'type' => 'object' ],
+                    'description' => 'The complete elements array, as returned by claude/elementor-get format "full"',
+                ],
+                'allow_convert' => [
+                    'type'        => 'boolean',
+                    'default'     => false,
+                    'description' => 'Allow turning a post that is not built with Elementor into an Elementor post',
+                ],
+            ],
+            'required'             => [ 'post_id', 'elements' ],
+            'additionalProperties' => false,
+        ],
+        'output_schema' => [ 'type' => 'object' ],
+        'execute_callback' => function ( $input ) {
+            if ( ! claude_wp_bridge_elementor_active() ) {
+                return new WP_Error( 'elementor_missing', 'Elementor is not active on this site', [ 'status' => 409 ] );
+            }
+            $post = claude_wp_bridge_elementor_target( $input );
+            if ( is_wp_error( $post ) ) {
+                return $post;
+            }
+            if ( ! claude_wp_bridge_elementor_is_built( $post->ID ) ) {
+                if ( empty( $input['allow_convert'] ) ) {
+                    return new WP_Error( 'not_elementor', 'This post is not built with Elementor; pass allow_convert: true to convert it', [ 'status' => 409 ] );
+                }
+                update_post_meta( $post->ID, '_elementor_edit_mode', 'builder' );
+                if ( ! get_post_meta( $post->ID, '_elementor_template_type', true ) ) {
+                    update_post_meta( $post->ID, '_elementor_template_type', $post->post_type === 'page' ? 'wp-page' : 'wp-post' );
+                }
+            }
+            return claude_wp_bridge_elementor_save( $post->ID, (array) $input['elements'] );
+        },
+        'permission_callback' => fn() => current_user_can( 'edit_pages' ),
+        'meta' => [
+            'mcp'          => [ 'public' => true ],
+            'show_in_rest' => true,
+            'annotations'  => [ 'readonly' => false, 'destructive' => true, 'idempotent' => true ],
+        ],
+    ] );
+
+    // ───────────────────────────────────────
+    // claude/elementor-restore
+    // ───────────────────────────────────────
+    wp_register_ability( 'claude/elementor-restore', [
+        'label'       => 'Restore Elementor Backup',
+        'description' => 'Put back a backup taken before an earlier claude/elementor-* write. Without backup_id it restores the most recent one. The restore itself is backed up first, so it can be undone the same way.',
+        'category'    => 'site',
+        'input_schema' => [
+            'type'       => 'object',
+            'properties' => [
+                'post_id'   => [ 'type' => 'integer', 'description' => 'Page, post or Elementor template ID' ],
+                'backup_id' => [ 'type' => 'integer', 'description' => 'Optional: backup to restore, from claude/elementor-get' ],
+            ],
+            'required'             => [ 'post_id' ],
+            'additionalProperties' => false,
+        ],
+        'output_schema' => [ 'type' => 'object' ],
+        'execute_callback' => function ( $input ) {
+            if ( ! claude_wp_bridge_elementor_active() ) {
+                return new WP_Error( 'elementor_missing', 'Elementor is not active on this site', [ 'status' => 409 ] );
+            }
+            $post = claude_wp_bridge_elementor_target( $input );
+            if ( is_wp_error( $post ) ) {
+                return $post;
+            }
+
+            $backup_id = intval( $input['backup_id'] ?? 0 );
+            if ( ! $backup_id ) {
+                $backups = claude_wp_bridge_elementor_backups( $post->ID );
+                if ( ! $backups ) {
+                    return new WP_Error( 'no_backup', 'This post has no backups', [ 'status' => 404 ] );
+                }
+                $backup_id = $backups[0]['backup_id'];
+            }
+
+            $meta = get_metadata_by_mid( 'post', $backup_id );
+            if ( ! $meta || (int) $meta->post_id !== $post->ID || $meta->meta_key !== '_claude_elementor_backup' ) {
+                return new WP_Error( 'backup_not_found', "Backup $backup_id does not belong to this post", [ 'status' => 404 ] );
+            }
+            $raw      = (string) ( $meta->meta_value['data'] ?? '' );
+            $elements = $raw === '' ? [] : json_decode( $raw, true );
+            if ( ! is_array( $elements ) ) {
+                return new WP_Error( 'backup_corrupt', "Backup $backup_id does not contain valid Elementor data", [ 'status' => 500 ] );
+            }
+
+            $result = claude_wp_bridge_elementor_save( $post->ID, $elements );
+            if ( is_wp_error( $result ) ) {
+                return $result;
+            }
+            $result['restored_from'] = $backup_id;
+            return $result;
+        },
+        'permission_callback' => fn() => current_user_can( 'edit_pages' ),
+        'meta' => [
+            'mcp'          => [ 'public' => true ],
+            'show_in_rest' => true,
+            'annotations'  => [ 'readonly' => false, 'destructive' => true, 'idempotent' => false ],
+        ],
+    ] );
+
+    // ───────────────────────────────────────
+    // claude/elementor-flush
+    // ───────────────────────────────────────
+    wp_register_ability( 'claude/elementor-flush', [
+        'label'       => 'Flush Elementor and Page Cache',
+        'description' => 'Regenerate Elementor CSS and purge LiteSpeed Cache. With post_id it flushes that post (or the whole site if it is an Elementor template); without it, the whole site. The claude/elementor-* writes already do this.',
+        'category'    => 'site',
+        'input_schema' => [
+            'type'       => 'object',
+            'properties' => [
+                'post_id' => [ 'type' => 'integer', 'description' => 'Optional: flush only this post' ],
+            ],
+            'additionalProperties' => false,
+        ],
+        'output_schema' => [
+            'type'       => 'object',
+            'properties' => [
+                'flushed' => [ 'type' => 'array', 'items' => [ 'type' => 'string' ] ],
+            ],
+        ],
+        'execute_callback' => function ( $input ) {
+            $post_id = intval( $input['post_id'] ?? 0 );
+            if ( $post_id ) {
+                $post = claude_wp_bridge_elementor_target( $input );
+                if ( is_wp_error( $post ) ) {
+                    return $post;
+                }
+            }
+            return [ 'flushed' => claude_wp_bridge_elementor_flush( $post_id ) ];
+        },
+        'permission_callback' => fn() => current_user_can( 'edit_pages' ),
+        'meta' => [
+            'mcp'          => [ 'public' => true ],
+            'show_in_rest' => true,
+            'annotations'  => [ 'readonly' => false, 'destructive' => false, 'idempotent' => true ],
         ],
     ] );
 
